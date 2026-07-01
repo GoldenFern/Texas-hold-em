@@ -219,11 +219,20 @@ const App = {
                 Controls.disableAll();
                 Controls.setStatus('🔄 回放模式 — 手牌 #' + data.hand_id);
                 const overlay = document.getElementById('replay-overlay');
-                overlay.style.display = 'flex';
+                if (overlay) {
+                    overlay.style.display = 'flex';
+                    overlay.style.flexDirection = 'column';
+                    overlay.style.alignItems = 'center';
+                    overlay.style.gap = '6px';
+                }
                 document.getElementById('hand-counter-toolbar').textContent = `回放 #${data.hand_id}`;
                 document.getElementById('btn-replay-history').textContent = '退出回放';
 
-                this._renderReplayTable();
+                try {
+                    this._renderReplayTable();
+                } catch (e) {
+                    console.error('渲染回放失败:', e);
+                }
             })
             .catch(e => alert('获取回放数据失败: ' + e));
     },
@@ -232,14 +241,19 @@ const App = {
     _exitReplay() {
         this._pauseReplay();
         this._replayActive = false;
-        document.getElementById('replay-overlay').style.display = '';
+        const overlay = document.getElementById('replay-overlay');
+        if (overlay) overlay.style.display = 'none';
         document.getElementById('btn-replay-history').textContent = '🔄 历史回放';
         document.getElementById('hand-counter-toolbar').textContent = this.gameState ? `手牌 #${this.gameState.hand_id}` : '等待开始';
-        Controls.setStatus('已退出回放');
+        Controls.setStatus('');
         // 恢复牌桌
-        if (this.gameState) {
-            Table.render(this.gameState);
-            Controls.update(this.gameState);
+        try {
+            if (this.gameState) {
+                Table.render(this.gameState);
+                Controls.update(this.gameState);
+            }
+        } catch (e) {
+            console.error('恢复牌桌失败:', e);
         }
     },
 

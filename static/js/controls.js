@@ -142,6 +142,7 @@ const Controls = {
             .map(([n, amt]) => `${n} +$${amt}${hands[n] ? ' (' + hands[n] + ')' : ''}`)
             .join(', ');
 
+        console.log('[Controls] 手牌完成:', data.hand_id, winnerText);
         this.setStatus(`🏆 手牌 #${data.hand_id} 结束 — 赢家: ${winnerText}`);
 
         // 隐藏常规动作按钮，显示继续/结束按钮
@@ -174,6 +175,7 @@ const Controls = {
     hideHandResult() {
         const pauseDiv = document.getElementById('hand-pause-controls');
         if (pauseDiv) pauseDiv.style.display = 'none';
-        document.getElementById('action-buttons').style.display = 'flex';
+        const actionBtns = document.getElementById('action-buttons');
+        if (actionBtns) actionBtns.style.display = '';
     },
 };
