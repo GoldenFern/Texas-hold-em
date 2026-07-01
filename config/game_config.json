@@ -1,0 +1,12 @@
+{
+  "max_players": 9,
+  "min_players": 2,
+  "starting_chips": 1000,
+  "small_blind": 5,
+  "big_blind": 10,
+  "ante": 0,
+  "betting_structure": "no_limit",
+  "time_bank_seconds": 30,
+  "default_bot_count": 4,
+  "default_bot_style": "TAG"
+}

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Texas Hold'em Poker</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- ====== 顶部导航栏 ====== -->
+    <header id="header">
+        <h1>♠ Texas Hold'em Poker ♠</h1>
+        <div id="header-controls">
+            <button id="btn-new-game" class="btn btn-header">新游戏</button>
+            <button id="btn-settings" class="btn btn-header">设置</button>
+            <span id="hand-counter">手牌 #0</span>
+        </div>
+    </header>
+
+    <!-- ====== 主游戏区 ====== -->
+    <div id="main-container">
+        <!-- 左侧：游戏桌 -->
+        <div id="table-container">
+            <div id="poker-table">
+                <!-- 社区牌区 -->
+                <div id="community-cards">
+                    <div class="community-card slot" data-slot="0"></div>
+                    <div class="community-card slot" data-slot="1"></div>
+                    <div class="community-card slot" data-slot="2"></div>
+                    <div class="community-card slot" data-slot="3"></div>
+                    <div class="community-card slot" data-slot="4"></div>
+                </div>
+
+                <!-- 底池显示 -->
+                <div id="pot-display">
+                    <span id="pot-amount">Pot: $0</span>
+                    <span id="pot-phase">WAITING</span>
+                </div>
+
+                <!-- 玩家位置 -->
+                <div id="players-container">
+                    <!-- 动态生成玩家位置 -->
+                </div>
+            </div>
+
+            <!-- 动作面板 -->
+            <div id="action-panel">
+                <div id="action-info">
+                    <span id="action-status">等待游戏开始...</span>
+                    <span id="action-to-call"></span>
+                </div>
+                <div id="action-buttons">
+                    <button id="btn-fold" class="btn btn-action btn-danger" disabled>Fold</button>
+                    <button id="btn-check" class="btn btn-action" disabled>Check</button>
+                    <button id="btn-call" class="btn btn-action btn-primary" disabled>Call</button>
+                    <button id="btn-raise" class="btn btn-action btn-warning" disabled>Raise</button>
+                </div>
+                <div id="bet-controls" style="display:none;">
+                    <input type="range" id="bet-slider" min="0" max="1000" value="0" step="1">
+                    <input type="number" id="bet-amount" min="0" value="0">
+                    <button id="btn-bet-confirm" class="btn btn-action btn-warning">确认下注</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：信息面板 -->
+        <div id="side-panel">
+            <!-- 标签页 -->
+            <div id="panel-tabs">
+                <button class="tab-btn active" data-tab="analysis">战局分析</button>
+                <button class="tab-btn" data-tab="history">牌局历史</button>
+                <button class="tab-btn" data-tab="stats">统计数据</button>
+            </div>
+
+            <!-- 战局分析面板 -->
+            <div id="panel-analysis" class="tab-content active">
+                <div id="hand-strength-display">
+                    <h3>手牌强度</h3>
+                    <div id="hand-strength-bar">
+                        <div id="hand-strength-fill"></div>
+                    </div>
+                    <span id="hand-strength-label">--</span>
+                </div>
+                <div id="pot-odds-display">
+                    <h3>底池赔率</h3>
+                    <div id="pot-odds-info">
+                        <div><span>底池:</span><span id="ao-pot">$0</span></div>
+                        <div><span>跟注:</span><span id="ao-to-call">$0</span></div>
+                        <div><span>赔率比:</span><span id="ao-ratio">--</span></div>
+                        <div><span>所需胜率:</span><span id="ao-required">0%</span></div>
+                    </div>
+                </div>
+                <div id="draw-info-display">
+                    <h3>听牌</h3>
+                    <div id="draw-info">
+                        <span id="draw-flush">同花听牌: --</span>
+                        <span id="draw-straight">顺子听牌: --</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 牌局历史面板 -->
+            <div id="panel-history" class="tab-content">
+                <div id="history-list"></div>
+            </div>
+
+            <!-- 统计面板 -->
+            <div id="panel-stats" class="tab-content">
+                <div id="stats-table-container">
+                    <table id="stats-table">
+                        <thead>
+                            <tr>
+                                <th>玩家</th>
+                                <th>VPIP</th>
+                                <th>PFR</th>
+                                <th>AF</th>
+                                <th>胜率</th>
+                                <th>盈亏</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stats-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ====== 新游戏弹窗 ====== -->
+    <div id="modal-new-game" class="modal" style="display:none;">
+        <div class="modal-content">
+            <h2>开始新游戏</h2>
+            <div class="modal-form">
+                <label>你的名字:</label>
+                <input type="text" id="input-player-name" value="Hero" maxlength="20">
+
+                <label>起始筹码:</label>
+                <input type="number" id="input-starting-chips" value="1000" min="100" max="100000">
+
+                <label>小盲/大盲:</label>
+                <div class="input-row">
+                    <input type="number" id="input-sb" value="5" min="1" max="1000">
+                    <span>/</span>
+                    <input type="number" id="input-bb" value="10" min="2" max="2000">
+                </div>
+
+                <label>下注结构:</label>
+                <select id="input-betting-structure">
+                    <option value="no_limit">无限注 (No Limit)</option>
+                    <option value="pot_limit">底池限注 (Pot Limit)</option>
+                    <option value="fixed_limit">固定限注 (Fixed Limit)</option>
+                </select>
+
+                <label>机器人（风格:名称）:</label>
+                <div id="bot-config-list">
+                    <div class="bot-row"><select class="bot-style"><option>TAG</option><option>LAG</option><option>NIT</option><option>CALLING_STATION</option><option>MANIAC</option><option>SHARK</option></select><input type="text" class="bot-name" value="Alice" maxlength="15"></div>
+                    <div class="bot-row"><select class="bot-style"><option>LAG</option><option>TAG</option><option>NIT</option><option>CALLING_STATION</option><option>MANIAC</option><option>SHARK</option></select><input type="text" class="bot-name" value="Bob" maxlength="15"></div>
+                    <div class="bot-row"><select class="bot-style"><option>NIT</option><option>TAG</option><option>LAG</option><option>CALLING_STATION</option><option>MANIAC</option><option>SHARK</option></select><input type="text" class="bot-name" value="Charlie" maxlength="15"></div>
+                    <div class="bot-row"><select class="bot-style"><option>CALLING_STATION</option><option>TAG</option><option>LAG</option><option>NIT</option><option>MANIAC</option><option>SHARK</option></select><input type="text" class="bot-name" value="Diana" maxlength="15"></div>
+                    <div class="bot-row"><select class="bot-style"><option>MANIAC</option><option>TAG</option><option>LAG</option><option>NIT</option><option>CALLING_STATION</option><option>SHARK</option></select><input type="text" class="bot-name" value="Eve" maxlength="15"></div>
+                </div>
+            </div>
+            <div class="modal-buttons">
+                <button id="btn-start-game" class="btn btn-primary">开始游戏</button>
+                <button id="btn-close-modal" class="btn">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 结果显示弹窗 -->
+    <div id="modal-result" class="modal" style="display:none;">
+        <div class="modal-content result-content">
+            <h2 id="result-title">🏆 手牌结果</h2>
+            <div id="result-body"></div>
+            <button id="btn-close-result" class="btn btn-primary">继续</button>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+    <script src="/static/js/app.js"></script>
+    <script src="/static/js/table.js"></script>
+    <script src="/static/js/controls.js"></script>
+    <script src="/static/js/ui.js"></script>
+</body>
+</html>

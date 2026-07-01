@@ -1,0 +1,553 @@
+"""LLM 客户端抽象层 — 多后端统一接口。
+
+支持：Anthropic Claude, OpenAI GPT, 本地 Ollama。
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional
+
+from src.llm.config import ProviderConfig
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMResponse:
+    """LLM 调用结果。"""
+
+    text: str
+    model: str
+    provider: str
+    latency_seconds: float
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_tokens: int = 0
+
+
+class LLMError(Exception):
+    """LLM 调用基础异常。"""
+
+
+class LLMTimeoutError(LLMError):
+    """LLM 调用超时。"""
+
+
+class LLMAPIError(LLMError):
+    """LLM API 返回错误。"""
+
+
+class LLMParseError(LLMError):
+    """LLM 响应无法解析。"""
+
+
+class LLMClient(ABC):
+    """LLM 客户端抽象基类。
+
+    每个后端实现此接口，提供 generate 和 generate_stream 方法。
+    """
+
+    def __init__(self, config: ProviderConfig) -> None:
+        self.config = config
+        self._call_count: int = 0
+        self._total_latency: float = 0.0
+        self._total_input_tokens: int = 0
+        self._total_output_tokens: int = 0
+
+    @abstractmethod
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        """同步生成响应。"""
+
+    @abstractmethod
+    def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        """流式生成响应，每收到一个 token 调用 on_token 回调。"""
+
+    @property
+    def stats(self) -> Dict[str, Any]:
+        """返回调用统计。"""
+        return {
+            "call_count": self._call_count,
+            "total_latency": round(self._total_latency, 2),
+            "avg_latency": round(self._total_latency / max(1, self._call_count), 2),
+            "total_input_tokens": self._total_input_tokens,
+            "total_output_tokens": self._total_output_tokens,
+        }
+
+    def _record_call(self, response: LLMResponse) -> None:
+        """记录一次调用统计。"""
+        self._call_count += 1
+        self._total_latency += response.latency_seconds
+        self._total_input_tokens += response.input_tokens
+        self._total_output_tokens += response.output_tokens
+
+
+class AnthropicClient(LLMClient):
+    """Anthropic Claude API 客户端。"""
+
+    def __init__(self, config: ProviderConfig) -> None:
+        super().__init__(config)
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            try:
+                import anthropic
+                self._client = anthropic.Anthropic(api_key=self.config.api_key)
+            except ImportError:
+                raise LLMError(
+                    "anthropic 包未安装，请运行: pip install anthropic"
+                )
+        return self._client
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        client = self._get_client()
+        timeout_s = timeout or self.config.timeout_seconds
+
+        kwargs: Dict[str, Any] = {
+            "model": self.config.model,
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system_prompt:
+            kwargs["system"] = system_prompt
+
+        start = time.perf_counter()
+        try:
+            response = client.messages.create(**kwargs)
+        except Exception as e:
+            raise LLMAPIError(f"Anthropic API 错误: {e}") from e
+
+        latency = time.perf_counter() - start
+        if latency > timeout_s:
+            raise LLMTimeoutError(
+                f"Anthropic 调用超时 ({latency:.1f}s > {timeout_s}s)"
+            )
+
+        content = response.content
+        text = ""
+        input_tokens = response.usage.input_tokens if hasattr(response, "usage") else 0
+        output_tokens = response.usage.output_tokens if hasattr(response, "usage") else 0
+        cached_tokens = getattr(response.usage, "cache_read_input_tokens", 0) if hasattr(response, "usage") else 0
+
+        for block in content:
+            if hasattr(block, "text"):
+                text += block.text
+
+        result = LLMResponse(
+            text=text,
+            model=self.config.model,
+            provider="anthropic",
+            latency_seconds=round(latency, 3),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cached_tokens=cached_tokens,
+        )
+        self._record_call(result)
+        return result
+
+    def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        client = self._get_client()
+        timeout_s = timeout or self.config.timeout_seconds
+
+        kwargs: Dict[str, Any] = {
+            "model": self.config.model,
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system_prompt:
+            kwargs["system"] = system_prompt
+
+        start = time.perf_counter()
+        full_text = ""
+        try:
+            with client.messages.stream(**kwargs) as stream:
+                for event in stream:
+                    if hasattr(event, "delta") and hasattr(event.delta, "text"):
+                        token = event.delta.text
+                        full_text += token
+                        if on_token:
+                            on_token(token)
+                    if time.perf_counter() - start > timeout_s:
+                        raise LLMTimeoutError("流式调用超时")
+        except LLMTimeoutError:
+            raise
+        except Exception as e:
+            raise LLMAPIError(f"Anthropic 流式 API 错误: {e}") from e
+
+        latency = time.perf_counter() - start
+        result = LLMResponse(
+            text=full_text,
+            model=self.config.model,
+            provider="anthropic",
+            latency_seconds=round(latency, 3),
+        )
+        self._record_call(result)
+        return result
+
+
+class OpenAIClient(LLMClient):
+    """OpenAI API 客户端（GPT-4o / GPT-4o-mini）。"""
+
+    def __init__(self, config: ProviderConfig) -> None:
+        super().__init__(config)
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            try:
+                import openai
+                self._client = openai.OpenAI(api_key=self.config.api_key)
+            except ImportError:
+                raise LLMError(
+                    "openai 包未安装，请运行: pip install openai"
+                )
+        return self._client
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        client = self._get_client()
+        timeout_s = timeout or self.config.timeout_seconds
+
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        start = time.perf_counter()
+        try:
+            response = client.chat.completions.create(
+                model=self.config.model,
+                messages=messages,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+            )
+        except Exception as e:
+            raise LLMAPIError(f"OpenAI API 错误: {e}") from e
+
+        latency = time.perf_counter() - start
+        if latency > timeout_s:
+            raise LLMTimeoutError(
+                f"OpenAI 调用超时 ({latency:.1f}s > {timeout_s}s)"
+            )
+
+        choice = response.choices[0]
+        text = choice.message.content or ""
+        usage = response.usage
+        input_tokens = usage.prompt_tokens if usage else 0
+        output_tokens = usage.completion_tokens if usage else 0
+
+        result = LLMResponse(
+            text=text,
+            model=self.config.model,
+            provider="openai",
+            latency_seconds=round(latency, 3),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        self._record_call(result)
+        return result
+
+    def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        client = self._get_client()
+        timeout_s = timeout or self.config.timeout_seconds
+
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        start = time.perf_counter()
+        full_text = ""
+        try:
+            stream = client.chat.completions.create(
+                model=self.config.model,
+                messages=messages,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+                stream=True,
+            )
+            for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    token = chunk.choices[0].delta.content
+                    full_text += token
+                    if on_token:
+                        on_token(token)
+                if time.perf_counter() - start > timeout_s:
+                    raise LLMTimeoutError("流式调用超时")
+        except LLMTimeoutError:
+            raise
+        except Exception as e:
+            raise LLMAPIError(f"OpenAI 流式 API 错误: {e}") from e
+
+        latency = time.perf_counter() - start
+        result = LLMResponse(
+            text=full_text,
+            model=self.config.model,
+            provider="openai",
+            latency_seconds=round(latency, 3),
+        )
+        self._record_call(result)
+        return result
+
+
+class OllamaClient(LLMClient):
+    """本地 Ollama 客户端（零成本/离线）。"""
+
+    def __init__(self, config: ProviderConfig) -> None:
+        super().__init__(config)
+        if not config.base_url:
+            config.base_url = "http://localhost:11434"
+        self._session: Any = None
+
+    def _get_session(self) -> Any:
+        if self._session is None:
+            try:
+                import requests
+                self._session = requests.Session()
+            except ImportError:
+                raise LLMError("requests 包未安装")
+        return self._session
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        session = self._get_session()
+        timeout_s = timeout or self.config.timeout_seconds
+
+        payload: Dict[str, Any] = {
+            "model": self.config.model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": self.config.temperature,
+                "num_predict": self.config.max_tokens,
+            },
+        }
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        start = time.perf_counter()
+        try:
+            resp = session.post(
+                f"{self.config.base_url}/api/generate",
+                json=payload,
+                timeout=timeout_s,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            raise LLMAPIError(f"Ollama API 错误: {e}") from e
+
+        latency = time.perf_counter() - start
+        text = data.get("response", "")
+        eval_count = data.get("eval_count", 0)
+        prompt_eval_count = data.get("prompt_eval_count", 0)
+
+        result = LLMResponse(
+            text=text,
+            model=self.config.model,
+            provider="ollama",
+            latency_seconds=round(latency, 3),
+            input_tokens=prompt_eval_count,
+            output_tokens=eval_count,
+        )
+        self._record_call(result)
+        return result
+
+    def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        session = self._get_session()
+        timeout_s = timeout or self.config.timeout_seconds
+
+        payload: Dict[str, Any] = {
+            "model": self.config.model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {
+                "temperature": self.config.temperature,
+                "num_predict": self.config.max_tokens,
+            },
+        }
+        if system_prompt:
+            payload["system"] = system_prompt
+
+        start = time.perf_counter()
+        full_text = ""
+        try:
+            resp = session.post(
+                f"{self.config.base_url}/api/generate",
+                json=payload,
+                timeout=timeout_s,
+                stream=True,
+            )
+            resp.raise_for_status()
+            for line in resp.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    token = chunk.get("response", "")
+                    full_text += token
+                    if on_token:
+                        on_token(token)
+                    if chunk.get("done", False):
+                        break
+                except json.JSONDecodeError:
+                    continue
+                if time.perf_counter() - start > timeout_s:
+                    raise LLMTimeoutError("流式调用超时")
+        except LLMTimeoutError:
+            raise
+        except Exception as e:
+            raise LLMAPIError(f"Ollama 流式 API 错误: {e}") from e
+
+        latency = time.perf_counter() - start
+        result = LLMResponse(
+            text=full_text,
+            model=self.config.model,
+            provider="ollama",
+            latency_seconds=round(latency, 3),
+        )
+        self._record_call(result)
+        return result
+
+
+class MockClient(LLMClient):
+    """测试用 Mock 客户端。
+
+    返回预设响应，不调用真实 API。
+    """
+
+    def __init__(self, config: Optional[ProviderConfig] = None, responses: Optional[List[str]] = None) -> None:
+        cfg = config or ProviderConfig(provider="mock", model="mock")
+        super().__init__(cfg)
+        self._responses = responses or ['{"action": "CALL", "amount": 0, "reasoning": "mock"}']
+
+    def add_response(self, response_json: str) -> None:
+        """追加一个预设响应。"""
+        self._responses.append(response_json)
+        self._idx = 0
+        self._call_log: List[Dict[str, str]] = []
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        self._call_log.append({"prompt": prompt, "system": system_prompt})
+        text = self._responses[self._idx % len(self._responses)]
+        self._idx += 1
+        result = LLMResponse(
+            text=text,
+            model="mock",
+            provider="mock",
+            latency_seconds=0.01,
+            input_tokens=100,
+            output_tokens=20,
+        )
+        self._record_call(result)
+        return result
+
+    def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        on_token: Optional[Callable[[str], None]] = None,
+        timeout: Optional[float] = None,
+    ) -> LLMResponse:
+        self._call_log.append({"prompt": prompt, "system": system_prompt})
+        text = self._responses[self._idx % len(self._responses)]
+        self._idx += 1
+        if on_token:
+            for char in text:
+                on_token(char)
+        result = LLMResponse(
+            text=text,
+            model="mock",
+            provider="mock",
+            latency_seconds=0.01,
+        )
+        self._record_call(result)
+        return result
+
+    @property
+    def call_log(self) -> List[Dict[str, str]]:
+        return self._call_log
+
+
+class LLMClientFactory:
+    """LLM 客户端工厂。
+
+    根据 ProviderConfig.provider 创建对应的客户端实例。
+    """
+
+    _REGISTRY: Dict[str, type] = {
+        "anthropic": AnthropicClient,
+        "openai": OpenAIClient,
+        "ollama": OllamaClient,
+        "mock": MockClient,
+    }
+
+    @classmethod
+    def create(cls, config: ProviderConfig) -> LLMClient:
+        """根据配置创建 LLM 客户端。"""
+        client_cls = cls._REGISTRY.get(config.provider)
+        if client_cls is None:
+            raise ValueError(
+                f"未知的 LLM 提供商: {config.provider}。"
+                f"支持: {list(cls._REGISTRY.keys())}"
+            )
+        return client_cls(config)
+
+    @classmethod
+    def register(cls, provider: str, client_cls: type) -> None:
+        """注册自定义 LLM 客户端。"""
+        cls._REGISTRY[provider] = client_cls
