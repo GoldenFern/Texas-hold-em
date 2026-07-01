@@ -89,6 +89,7 @@ const Table = {
 
             if (isCurrentPlayer && isActive) spot.classList.add('active-turn');
             if (isFolded) spot.classList.add('folded');
+            if (p._replay_highlight) spot.classList.add('replay-highlight');
 
             // 玩家信息卡片
             let blindBadge = '';

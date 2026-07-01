@@ -371,7 +371,21 @@ class GameManager:
         """牌局结束回调。"""
         if history is not None:
             self.reporter.record_hand(history)
-            # 保存回放数据
+            # 构建阶段化的回放数据
+            community_cards = [str(c) for c in history.community_cards]
+            # 推断每个阶段开始的动作索引（翻牌前→翻牌→转牌→河牌）
+            # 简化：根据社区牌数量推断（0→3→4→5）
+            phase_starts = [0]  # PRE_FLOP 从第 0 个动作开始
+            cc_count = 0
+            for i, a in enumerate(history.actions):
+                # 每次有新社区牌时记录阶段边界
+                new_cc = min(len(community_cards), cc_count + (3 if cc_count == 0 else 1))
+                if i > 0 and new_cc > cc_count and cc_count < len(community_cards):
+                    phase_starts.append(i)
+                    cc_count = new_cc
+                elif i == 0:
+                    cc_count = 0
+
             replay = {
                 "hand_id": history.hand_id,
                 "players": [
@@ -382,7 +396,7 @@ class GameManager:
                     }
                     for name in history.players
                 ],
-                "community_cards": [str(c) for c in history.community_cards],
+                "community_cards": community_cards,
                 "actions": [
                     {
                         "player": a.player_name,
@@ -392,6 +406,7 @@ class GameManager:
                     }
                     for a in history.actions
                 ],
+                "phase_boundaries": phase_starts,  # 每个阶段开始的 action 索引
                 "winners": dict(history.winners),
                 "winning_hands": {n: str(h) for n, h in history.winning_hands.items()},
                 "pot_total": history.pot_total,

@@ -89,6 +89,7 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    position: relative;  /* 让回放覆盖层定位 */
 }
 #side-panel {
     width: 320px;
@@ -564,6 +565,16 @@ body {
 .btn-remove-fallback { color: var(--red); background: transparent; border: 1px solid var(--red); padding: 2px 6px; font-size: 12px; cursor: pointer; border-radius: 4px; }
 .btn-remove-fallback:hover { background: var(--red); color: #fff; }
 
+/* ---- 回放高亮 ---- */
+.player-spot.replay-highlight {
+    animation: replay-glow 0.8s ease-in-out infinite alternate;
+    z-index: 10 !important;
+}
+@keyframes replay-glow {
+    from { filter: drop-shadow(0 0 6px var(--gold)); }
+    to   { filter: drop-shadow(0 0 16px var(--gold-light)); }
+}
+
 /* ---- 回放面板 ---- */
 .replay-content {
     min-width: 450px;
@@ -650,6 +661,25 @@ body {
 .replay-action-info .rp-action-type {
     color: #fff;
     font-weight: bold;
+}
+
+/* 回放覆盖层 */
+.replay-overlay {
+    display: none;
+    position: absolute;
+    bottom: 15px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    background: rgba(0,0,0,0.88);
+    border-radius: 10px;
+    padding: 10px 18px;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--gold);
+    min-width: 380px;
+    max-width: 500px;
 }
 
 /* ---- 响应式 ---- */

@@ -68,6 +68,21 @@
             </div>
         </div>
 
+        <!-- 回放覆盖层（牌桌上） -->
+        <div id="replay-overlay" class="replay-overlay">
+            <div style="display:flex;align-items:center;gap:8px;width:100%;">
+                <select id="replay-hand-selector" style="padding:4px 6px;background:#222;border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:11px;flex:1;max-width:250px;"></select>
+                <span id="replay-step-counter" style="font-family:monospace;font-size:11px;color:var(--text-secondary);flex-shrink:0;">0 / 0</span>
+            </div>
+            <div id="replay-action-info" style="font-size:13px;color:#fff;text-align:center;min-height:18px;"></div>
+            <div style="display:flex;gap:6px;">
+                <button id="btn-replay-prev" class="btn btn-sm">◀</button>
+                <button id="btn-replay-play" class="btn btn-primary btn-sm">▶ 播放</button>
+                <button id="btn-replay-next" class="btn btn-sm">▶</button>
+                <button id="btn-replay-reset" class="btn btn-sm">↺</button>
+            </div>
+        </div>
+
         <!-- 右侧：信息面板 -->
         <div id="side-panel">
             <!-- 标签页 -->
@@ -275,27 +290,6 @@
         </div>
     </div>
 
-    <!-- 回放弹窗 -->
-    <div id="modal-replay" class="modal" style="display:none;">
-        <div class="modal-content replay-content">
-            <h2>🔄 手牌回放</h2>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
-                <label style="font-size:13px;color:var(--text-secondary);">选择手牌:</label>
-                <select id="replay-hand-selector" style="flex:1;padding:4px 8px;background:#222;border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:13px;"></select>
-            </div>
-            <div class="replay-players" id="replay-players"></div>
-            <div class="replay-timeline" id="replay-timeline"></div>
-            <div class="replay-controls">
-                <button id="btn-replay-prev" class="btn btn-sm">◀ 上一步</button>
-                <button id="btn-replay-play" class="btn btn-primary btn-sm">▶ 播放</button>
-                <button id="btn-replay-next" class="btn btn-sm">下一步 ▶</button>
-                <button id="btn-replay-reset" class="btn btn-sm">↺ 重置</button>
-                <span class="replay-step-counter" id="replay-step-counter">0 / 0</span>
-            </div>
-            <div class="replay-action-info" id="replay-action-info"></div>
-            <button id="btn-close-replay" class="btn btn-primary" style="margin-top:10px;">关闭</button>
-        </div>
-    </div>
 
     <!-- 结果显示弹窗 -->
     <div id="modal-result" class="modal" style="display:none;">
