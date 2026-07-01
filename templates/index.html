@@ -174,11 +174,32 @@
         </div>
     </div>
 
+    <!-- 回放弹窗 -->
+    <div id="modal-replay" class="modal" style="display:none;">
+        <div class="modal-content replay-content">
+            <h2>🔄 手牌回放 <span id="replay-hand-id"></span></h2>
+            <div class="replay-players" id="replay-players"></div>
+            <div class="replay-timeline" id="replay-timeline"></div>
+            <div class="replay-controls">
+                <button id="btn-replay-prev" class="btn btn-sm">◀ 上一步</button>
+                <button id="btn-replay-play" class="btn btn-primary btn-sm">▶ 播放</button>
+                <button id="btn-replay-next" class="btn btn-sm">下一步 ▶</button>
+                <button id="btn-replay-reset" class="btn btn-sm">↺ 重置</button>
+                <span class="replay-step-counter" id="replay-step-counter">0 / 0</span>
+            </div>
+            <div class="replay-action-info" id="replay-action-info"></div>
+            <button id="btn-close-replay" class="btn btn-primary" style="margin-top:10px;">关闭</button>
+        </div>
+    </div>
+
     <!-- 结果显示弹窗 -->
     <div id="modal-result" class="modal" style="display:none;">
         <div class="modal-content result-content">
             <h2 id="result-title">🏆 手牌结果</h2>
             <div id="result-body"></div>
+            <div style="margin-top:10px;">
+                <button id="btn-replay-from-result" class="btn btn-sm">🔄 回放本局</button>
+            </div>
             <button id="btn-close-result" class="btn btn-primary">继续</button>
         </div>
     </div>

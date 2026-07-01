@@ -31,6 +31,7 @@ class GameManager:
         self._lock = Lock()
         self._bot_running: bool = False
         self._bot_wake_event = Event()
+        self._last_replay: Optional[dict] = None  # 最近一手牌的完整回放数据
 
     def create_game(
         self,
@@ -217,8 +218,8 @@ class GameManager:
                         break
                     continue
 
-            # 手牌进行中，当前是机器人 → 短暂延迟后执行
-            _sleep(0.3)
+            # 手牌进行中，当前是机器人 → 延迟以模拟思考时间
+            _sleep(1.0)
 
             # 重新获取锁，确认当前玩家和机器人
             with self._lock:
@@ -309,7 +310,12 @@ class GameManager:
         if socketio is None or self.game is None:
             return
         human = self._get_human_player()
-        state = self.game.to_dict(for_player=human.name if human else None)
+        # 人类玩家弃牌后，展示所有底牌（旁观模式）
+        human_folded = human is not None and human.is_folded
+        state = self.game.to_dict(
+            for_player=human.name if human and not human_folded else None,
+            reveal_all=human_folded,
+        )
         # 添加当前可行动作
         if human and human.name == self.game.players[self.game.current_player_index].name:
             state["legal_actions"] = [
@@ -338,6 +344,35 @@ class GameManager:
         """牌局结束回调。"""
         if history is not None:
             self.reporter.record_hand(history)
+            # 保存回放数据
+            self._last_replay = {
+                "hand_id": history.hand_id,
+                "players": [
+                    {
+                        "name": name,
+                        "hole_cards": [str(c) for c in history.hole_cards.get(name, [])],
+                        "is_human": name == self.human_player_name,
+                    }
+                    for name in history.players
+                ],
+                "community_cards": [str(c) for c in history.community_cards],
+                "actions": [
+                    {
+                        "player": a.player_name,
+                        "action": a.action_type.name,
+                        "amount": a.amount,
+                        "is_all_in": a.is_all_in,
+                    }
+                    for a in history.actions
+                ],
+                "winners": dict(history.winners),
+                "winning_hands": {n: str(h) for n, h in history.winning_hands.items()},
+                "pot_total": history.pot_total,
+            }
+
+    def get_replay(self) -> Optional[dict]:
+        """返回最近一手牌的完整回放数据。"""
+        return self._last_replay
 
     def get_history(self) -> list:
         """获取牌局历史摘要（最近 20 手）。"""

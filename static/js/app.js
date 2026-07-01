@@ -130,9 +130,169 @@ const App = {
         document.getElementById('btn-close-result').addEventListener('click', () => {
             document.getElementById('modal-result').style.display = 'none';
         });
+        document.getElementById('btn-close-replay').addEventListener('click', () => {
+            this._pauseReplay();
+            document.getElementById('modal-replay').style.display = 'none';
+        });
+        document.getElementById('btn-replay-from-result').addEventListener('click', () => {
+            document.getElementById('modal-result').style.display = 'none';
+            this._openReplay();
+        });
+
+        // 回放控制
+        document.getElementById('btn-replay-play').addEventListener('click', () => {
+            if (this._replayPlaying) this._pauseReplay();
+            else this._startReplay();
+        });
+        document.getElementById('btn-replay-prev').addEventListener('click', () => this._stepReplay(-1));
+        document.getElementById('btn-replay-next').addEventListener('click', () => this._stepReplay(1));
+        document.getElementById('btn-replay-reset').addEventListener('click', () => this._resetReplay());
 
         // 动作按钮
         Controls.bindEvents(this);
+    },
+
+    // ============ 回放系统 ============
+
+    _replayData: null,
+    _replayStep: 0,
+    _replayPlaying: false,
+    _replayTimer: null,
+
+    /** 打开回放面板 */
+    _openReplay() {
+        fetch('/api/game/replay')
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) { alert(data.error); return; }
+                this._replayData = data;
+                this._replayStep = 0;
+                this._replayPlaying = false;
+                document.getElementById('replay-hand-id').textContent = `#${data.hand_id}`;
+
+                // 显示玩家底牌
+                const playersDiv = document.getElementById('replay-players');
+                playersDiv.innerHTML = data.players.map(p =>
+                    `<div class="rp-player">
+                        ${p.is_human ? '👤' : '🤖'} <b>${p.name}</b>
+                        <span class="rp-cards">${(p.hole_cards || []).join(' ')}</span>
+                    </div>`
+                ).join('');
+
+                this._renderReplay();
+                document.getElementById('modal-replay').style.display = 'flex';
+            })
+            .catch(e => alert('获取回放数据失败: ' + e));
+    },
+
+    /** 开始自动播放 */
+    _startReplay() {
+        this._replayPlaying = true;
+        document.getElementById('btn-replay-play').textContent = '⏸ 暂停';
+        this._replayAdvance();
+    },
+
+    /** 暂停 */
+    _pauseReplay() {
+        this._replayPlaying = false;
+        document.getElementById('btn-replay-play').textContent = '▶ 播放';
+        if (this._replayTimer) { clearTimeout(this._replayTimer); this._replayTimer = null; }
+    },
+
+    /** 自动推进 */
+    _replayAdvance() {
+        if (!this._replayPlaying) return;
+        if (this._replayStep < (this._replayData?.actions?.length || 0)) {
+            this._renderReplay();
+            this._replayStep++;
+            this._replayTimer = setTimeout(() => this._replayAdvance(), 1000);
+        } else {
+            this._pauseReplay();
+        }
+    },
+
+    /** 手动步进 */
+    _stepReplay(delta) {
+        this._pauseReplay();
+        const max = this._replayData?.actions?.length || 0;
+        this._replayStep = Math.max(0, Math.min(max, this._replayStep + delta));
+        this._renderReplay();
+    },
+
+    /** 重置回放 */
+    _resetReplay() {
+        this._pauseReplay();
+        this._replayStep = 0;
+        this._renderReplay();
+    },
+
+    /** 渲染回放状态 */
+    _renderReplay() {
+        const data = this._replayData;
+        if (!data) return;
+
+        const actions = data.actions || [];
+        const max = actions.length;
+
+        // 渲染时间轴
+        const timeline = document.getElementById('replay-timeline');
+        timeline.innerHTML = actions.map((a, i) => {
+            let cls = 'rp-step';
+            if (i < this._replayStep) cls += ' past';
+            if (i === this._replayStep && this._replayStep < max) cls += ' current';
+            const actionLabel = this._formatAction(a);
+            return `<div class="${cls}" onclick="App._jumpReplay(${i})">
+                <span class="rp-step-num">#${i + 1}</span>
+                <span>${actionLabel}</span>
+            </div>`;
+        }).join('');
+
+        // 滚动到当前步骤
+        const currentEl = timeline.querySelector('.rp-step.current');
+        if (currentEl) currentEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+        // 更新步骤计数器
+        document.getElementById('replay-step-counter').textContent =
+            `${Math.min(this._replayStep, max)} / ${max}`;
+
+        // 显示当前动作详情
+        const infoDiv = document.getElementById('replay-action-info');
+        if (this._replayStep < max) {
+            const a = actions[this._replayStep];
+            infoDiv.innerHTML = `<span class="rp-action-player">${a.player}</span>
+                → <span class="rp-action-type">${this._formatAction(a)}</span>`;
+        } else {
+            // 回放结束，显示结果
+            const winners = data.winners || {};
+            const hands = data.winning_hands || {};
+            const winnerText = Object.entries(winners)
+                .map(([n, amt]) => `${n} +$${amt}${hands[n] ? ' (' + hands[n] + ')' : ''}`)
+                .join(', ');
+            infoDiv.innerHTML = `🏆 本局结束 — 公共牌: <b>${(data.community_cards || []).join(' ')}</b> — 赢家: ${winnerText}`;
+        }
+
+        // 更新按钮状态
+        document.getElementById('btn-replay-prev').disabled = this._replayStep <= 0;
+        document.getElementById('btn-replay-next').disabled = this._replayStep >= max;
+        document.getElementById('btn-replay-play').disabled = this._replayStep >= max;
+    },
+
+    /** 格式化动作文本 */
+    _formatAction(a) {
+        const actionNames = {
+            'FOLD': '弃牌', 'CHECK': '过牌', 'CALL': '跟注',
+            'BET': '下注', 'RAISE': '加注', 'ALL_IN': '全下'
+        };
+        const name = actionNames[a.action] || a.action;
+        if (a.amount > 0) return `${name} $${a.amount}`;
+        return name;
+    },
+
+    /** 跳转到指定步骤（从 HTML onclick 调用） */
+    _jumpReplay(step) {
+        this._pauseReplay();
+        this._replayStep = step;
+        this._renderReplay();
     },
 
     /** 开始新游戏 */

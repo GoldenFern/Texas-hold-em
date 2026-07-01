@@ -686,11 +686,12 @@ class GameState:
     # 获取可序列化的状态快照（供前端）
     # ================================================================
 
-    def to_dict(self, for_player: Optional[str] = None) -> dict:
+    def to_dict(self, for_player: Optional[str] = None, reveal_all: bool = False) -> dict:
         """将游戏状态序列化为字典（供 API 返回）。
 
         Args:
             for_player: 指定查看状态的玩家，其底牌可见。
+            reveal_all: 为 True 时显示所有玩家的底牌（旁观/弃牌后）。
         """
         return {
             "hand_id": self.hand_id,
@@ -705,7 +706,7 @@ class GameState:
             "big_blind": self.big_blind,
             "ante": self.ante,
             "players": [
-                self._player_to_dict(p, show_hole=(for_player == p.name))
+                self._player_to_dict(p, show_hole=(reveal_all or for_player == p.name))
                 for p in self.players
             ],
             "winners": dict(self.winners),

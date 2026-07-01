@@ -77,6 +77,7 @@ body {
 .btn-danger { background: var(--red); }
 .btn-warning { background: #e67e22; }
 .btn-action { min-width: 80px; padding: 10px 24px; font-size: 1em; }
+.btn-sm { padding: 4px 12px; font-size: 0.82em; }
 
 /* ---- 主布局 ---- */
 #main-container {
@@ -460,6 +461,94 @@ body {
 #result-body {
     margin: 16px 0;
     line-height: 1.6;
+}
+
+/* ---- 回放面板 ---- */
+.replay-content {
+    min-width: 450px;
+    max-width: 550px;
+}
+.replay-players {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+    font-size: 13px;
+}
+.replay-players .rp-player {
+    background: #2a2a3e;
+    padding: 4px 10px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.replay-players .rp-player .rp-cards {
+    font-family: monospace;
+    letter-spacing: 2px;
+}
+.replay-timeline {
+    max-height: 200px;
+    overflow-y: auto;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    background: #111;
+}
+.replay-timeline .rp-step {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: monospace;
+    color: #999;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.replay-timeline .rp-step:hover { background: #222; }
+.replay-timeline .rp-step.current {
+    background: var(--blue-dark);
+    color: #fff;
+    font-weight: bold;
+}
+.replay-timeline .rp-step.past { color: #ccc; }
+.replay-timeline .rp-step .rp-step-num {
+    display: inline-block;
+    width: 28px;
+    text-align: right;
+    color: #666;
+}
+.replay-timeline .rp-step.current .rp-step-num { color: var(--gold-light); }
+.replay-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.replay-step-counter {
+    margin-left: auto;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-family: monospace;
+}
+.replay-action-info {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: #1a1a2e;
+    border-radius: 6px;
+    font-size: 14px;
+    text-align: center;
+}
+.replay-action-info .rp-action-player {
+    color: var(--gold);
+    font-weight: bold;
+}
+.replay-action-info .rp-action-type {
+    color: #fff;
+    font-weight: bold;
 }
 
 /* ---- 响应式 ---- */

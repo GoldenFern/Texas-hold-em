@@ -4,6 +4,8 @@
 
 const Controls = {
     _app: null,
+    _currentBetAction: 'raise',
+    _betControlsVisible: false,
 
     /** 绑定动作按钮事件 */
     bindEvents(app) {
@@ -19,7 +21,10 @@ const Controls = {
             app.sendAction('call');
         });
         document.getElementById('btn-raise').addEventListener('click', () => {
-            this._showBetControls('raise');
+            // 新下注轮用 BET，已有下注时用 RAISE
+            const legalActions = app.gameState?.legal_actions || [];
+            const action = legalActions.includes('BET') ? 'bet' : 'raise';
+            this._showBetControls(action);
         });
         document.getElementById('btn-bet-confirm').addEventListener('click', () => {
             const amount = parseInt(document.getElementById('bet-amount').value) || 0;
@@ -36,9 +41,6 @@ const Controls = {
             document.getElementById('bet-slider').value = e.target.value;
         });
     },
-
-    _currentBetAction: 'raise',
-    _betControlsVisible: false,
 
     _showBetControls(action) {
         this._currentBetAction = action;
