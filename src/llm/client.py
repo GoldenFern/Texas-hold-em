@@ -215,7 +215,7 @@ class AnthropicClient(LLMClient):
 
 
 class OpenAIClient(LLMClient):
-    """OpenAI API 客户端（GPT-4o / GPT-4o-mini）。"""
+    """OpenAI 兼容 API 客户端（GPT / DeepSeek / Qwen / GLM / Kimi / MiniMax）。"""
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
@@ -225,7 +225,10 @@ class OpenAIClient(LLMClient):
         if self._client is None:
             try:
                 import openai
-                self._client = openai.OpenAI(api_key=self.config.api_key)
+                kwargs: Dict[str, Any] = {"api_key": self.config.api_key}
+                if self.config.base_url:
+                    kwargs["base_url"] = self.config.base_url
+                self._client = openai.OpenAI(**kwargs)
             except ImportError:
                 raise LLMError(
                     "openai 包未安装，请运行: pip install openai"
@@ -533,6 +536,11 @@ class LLMClientFactory:
     _REGISTRY: Dict[str, type] = {
         "anthropic": AnthropicClient,
         "openai": OpenAIClient,
+        "deepseek": OpenAIClient,   # DeepSeek (OpenAI 兼容)
+        "qwen": OpenAIClient,       # 通义千问 (OpenAI 兼容)
+        "glm": OpenAIClient,        # 智谱 GLM (OpenAI 兼容)
+        "kimi": OpenAIClient,       # Moonshot Kimi (OpenAI 兼容)
+        "minimax": OpenAIClient,    # MiniMax (OpenAI 兼容)
         "ollama": OllamaClient,
         "mock": MockClient,
     }

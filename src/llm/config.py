@@ -57,6 +57,41 @@ class LLMConfig:
     enable_advisor: bool = False
 
 
+# 国内 LLM 提供商预设
+PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
+    "deepseek": {
+        "display_name": "DeepSeek",
+        "base_url": "https://api.deepseek.com",
+        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        "api_key_env": "DEEPSEEK_API_KEY",
+    },
+    "qwen": {
+        "display_name": "通义千问 (Qwen)",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "models": ["qwen-3.7-max", "qwen-3.7-plus"],
+        "api_key_env": "DASHSCOPE_API_KEY",
+    },
+    "glm": {
+        "display_name": "智谱 GLM",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "models": ["glm-5.2", "glm-5-turbo"],
+        "api_key_env": "GLM_API_KEY",
+    },
+    "kimi": {
+        "display_name": "Kimi (月之暗面)",
+        "base_url": "https://api.moonshot.cn",
+        "models": ["kimi-k2.6"],
+        "api_key_env": "MOONSHOT_API_KEY",
+    },
+    "minimax": {
+        "display_name": "MiniMax",
+        "base_url": "https://api.minimaxi.com/v1",
+        "models": ["MiniMax-M3"],
+        "api_key_env": "MINIMAX_API_KEY",
+    },
+}
+
+
 def _find_project_root() -> Path:
     """查找项目根目录（包含 src/ 的目录）。"""
     current = Path(__file__).resolve().parent
@@ -98,10 +133,27 @@ def load_config(config_path: Optional[str] = None) -> LLMConfig:
         return os.environ.get(env_prefix + key, default)
 
     # 主力后端
-    provider = _env("PROVIDER") or json_config.get("provider", "anthropic")
-    model = _env("MODEL") or json_config.get("model", "claude-sonnet-4-20250514")
-    api_key = _env("API_KEY") or json_config.get("api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    provider = _env("PROVIDER") or json_config.get("provider", "deepseek")
+    model = _env("MODEL") or json_config.get("model", "deepseek-v4-pro")
+    # API Key：优先环境变量 THP_LLM_API_KEY，其次提供商专用环境变量，再其次配置文件
+    api_key = _env("API_KEY") or json_config.get("api_key", "")
+    if not api_key:
+        # 根据提供商查找对应的环境变量
+        key_env_map = {
+            "anthropic": "ANTHROPIC_API_KEY",
+            "openai": "OPENAI_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+            "qwen": "DASHSCOPE_API_KEY",
+            "glm": "GLM_API_KEY",
+            "kimi": "MOONSHOT_API_KEY",
+            "minimax": "MINIMAX_API_KEY",
+        }
+        env_var = key_env_map.get(provider, "")
+        if env_var:
+            api_key = os.environ.get(env_var, "")
     base_url = _env("BASE_URL") or json_config.get("base_url", "")
+    if not base_url and provider in PROVIDER_PRESETS:
+        base_url = PROVIDER_PRESETS[provider]["base_url"]
     timeout = float(_env("TIMEOUT") or json_config.get("timeout_seconds", 15.0))
 
     config.primary = ProviderConfig(
