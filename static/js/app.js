@@ -79,6 +79,7 @@ const App = {
 
         this.socket.on('game_update', (state) => {
             this.gameState = state;
+            Controls.hideHandResult();  // 新状态到达时隐藏暂停面板
             Table.render(state);
             Controls.update(state);
             UI.updateAnalysis(state);
@@ -96,9 +97,21 @@ const App = {
             Controls.setStatus('轮到你行动了！');
         });
 
+        this.socket.on('hand_completed', (data) => {
+            Controls.showHandResult(data);
+            UI.showResult(
+                `手牌 #${data.hand_id} 结束\n\n` +
+                Object.entries(data.winners || {}).map(([n, amt]) =>
+                    `${n} +$${amt}${(data.winning_hands || {})[n] ? ' (' + data.winning_hands[n] + ')' : ''}`
+                ).join('\n') +
+                `\n\n底池: $${data.pot_total}`
+            );
+        });
+
         this.socket.on('game_over', (data) => {
             Controls.setStatus('游戏结束');
             Controls.disableAll();
+            Controls.hideHandResult();
             UI.showResult(data.message || '游戏结束！');
         });
     },

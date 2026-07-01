@@ -31,6 +31,8 @@ class GameManager:
         self._lock = Lock()
         self._bot_running: bool = False
         self._bot_wake_event = Event()
+        self._hand_paused: bool = False  # 手牌结束后暂停
+        self._hand_continue_event = Event()
         self._replay_history: List[dict] = []  # 所有已完成手牌的完整回放数据
 
     def create_game(
@@ -210,10 +212,22 @@ class GameManager:
                 if game.phase.value >= 6:
                     active = [p for p in game.players if p.chips > 0]
                     if len(active) >= 2:
-                        _sleep(2.0)
+                        # 手牌结束 → 暂停等待用户选择
+                        self._broadcast_state()
+                        self._emit_hand_completed()
+                        self._hand_paused = True
+                        self._hand_continue_event.clear()
+                        # 等待用户点击"继续"或"结束"
+                        _sleep(0.5)
+                        while self._bot_running and self._hand_paused:
+                            self._hand_continue_event.wait(timeout=1.0)
+                        if not self._bot_running:
+                            break
+                        # 用户选择继续 → 开始下一手
                         game.start_new_hand()
                         self._broadcast_state()
                     else:
+                        self._broadcast_state()
                         self._emit_game_over()
                         break
                     continue
@@ -334,6 +348,19 @@ class GameManager:
             return
         socketio.emit("action_required", {"player": player_name})
 
+    def _emit_hand_completed(self) -> None:
+        """通知手牌完成，等待用户选择继续或结束。"""
+        if socketio is None or self.game is None:
+            return
+        winners = dict(self.game.winners) if self.game.winners else {}
+        hands = {n: str(h) for n, h in (self.game.winning_hands or {}).items()}
+        socketio.emit("hand_completed", {
+            "hand_id": self.game.hand_id,
+            "winners": winners,
+            "winning_hands": hands,
+            "pot_total": self.game.pot.total,
+        })
+
     def _emit_game_over(self) -> None:
         """通知游戏结束。"""
         if socketio is None:
@@ -370,6 +397,17 @@ class GameManager:
                 "pot_total": history.pot_total,
             }
             self._replay_history.append(replay)
+
+    def continue_game(self) -> None:
+        """用户选择继续游戏 —— 开始下一手牌。"""
+        self._hand_paused = False
+        self._hand_continue_event.set()
+
+    def end_game(self) -> None:
+        """用户选择结束游戏。"""
+        self._bot_running = False
+        self._hand_paused = False
+        self._hand_continue_event.set()
 
     def get_replay_list(self) -> list:
         """返回所有可回放的手牌摘要列表。"""
@@ -458,6 +496,18 @@ def register_events(app: Flask) -> None:
             ante=data.get("ante", 0),
             betting_structure=data.get("betting_structure", "no_limit"),
         )
+
+    @socketio.on("continue_game")
+    def handle_continue_game():
+        """用户选择继续游戏。"""
+        print("[SocketIO] 用户选择继续游戏")
+        _game_manager.continue_game()
+
+    @socketio.on("end_game")
+    def handle_end_game():
+        """用户选择结束游戏。"""
+        print("[SocketIO] 用户选择结束游戏")
+        _game_manager.end_game()
 
     @socketio.on("player_action")
     def handle_player_action(data: dict):

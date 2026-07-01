@@ -133,4 +133,47 @@ const Controls = {
     setStatus(text) {
         document.getElementById('action-status').textContent = text;
     },
+
+    /** 手牌完成后显示结果和继续/结束按钮 */
+    showHandResult(data) {
+        const winners = data.winners || {};
+        const hands = data.winning_hands || {};
+        const winnerText = Object.entries(winners)
+            .map(([n, amt]) => `${n} +$${amt}${hands[n] ? ' (' + hands[n] + ')' : ''}`)
+            .join(', ');
+
+        this.setStatus(`🏆 手牌 #${data.hand_id} 结束 — 赢家: ${winnerText}`);
+
+        // 隐藏常规动作按钮，显示继续/结束按钮
+        document.getElementById('action-buttons').style.display = 'none';
+        document.getElementById('bet-controls').style.display = 'none';
+
+        let pauseDiv = document.getElementById('hand-pause-controls');
+        if (!pauseDiv) {
+            pauseDiv = document.createElement('div');
+            pauseDiv.id = 'hand-pause-controls';
+            pauseDiv.style.cssText = 'display:flex;gap:10px;justify-content:center;';
+            pauseDiv.innerHTML = `
+                <button id="btn-continue-game" class="btn btn-action btn-primary">▶ 继续下一局</button>
+                <button id="btn-end-game" class="btn btn-action btn-danger">⏹ 结束游戏</button>
+            `;
+            document.getElementById('action-panel').appendChild(pauseDiv);
+
+            // 事件委托给 App
+            document.getElementById('btn-continue-game').addEventListener('click', () => {
+                this._app.socket.emit('continue_game');
+            });
+            document.getElementById('btn-end-game').addEventListener('click', () => {
+                this._app.socket.emit('end_game');
+            });
+        }
+        pauseDiv.style.display = 'flex';
+    },
+
+    /** 隐藏暂停按钮，恢复常规动作按钮 */
+    hideHandResult() {
+        const pauseDiv = document.getElementById('hand-pause-controls');
+        if (pauseDiv) pauseDiv.style.display = 'none';
+        document.getElementById('action-buttons').style.display = 'flex';
+    },
 };
