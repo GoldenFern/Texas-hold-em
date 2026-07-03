@@ -236,13 +236,18 @@ const App = {
 
     /** 打开回放面板（handId 可选，默认最近一手） */
     _openReplay(handId) {
-        if (this._replayLoading) return;
+        if (this._replayLoading) {
+            console.warn('Replay: already loading, skipping');
+            return;
+        }
         this._replayLoading = true;
+        console.log('Replay: fetching replay list...');
         fetch('/api/game/replays')
             .then(r => r.json())
             .then(list => {
+                console.log('Replay: got list', list.length, 'hands');
                 if (list.error) { alert(list.error); return; }
-                if (!list.length) { alert('还没有任何可回放的手牌'); return; }
+                if (!list.length) { alert('还没有任何可回放的手牌，请先打完一局'); return; }
 
                 const selector = document.getElementById('replay-hand-selector');
                 selector.innerHTML = list.map(h => {
@@ -255,16 +260,25 @@ const App = {
                 selector.value = targetId;
                 this._loadReplayHand(targetId);
             })
-            .catch(e => alert('获取回放列表失败: ' + e))
+            .catch(e => {
+                console.error('Replay: fetch list failed', e);
+                alert('获取回放列表失败: ' + (e.message || e));
+            })
             .finally(() => { this._replayLoading = false; });
     },
 
     /** 加载指定手牌的回放数据 */
     _loadReplayHand(handId) {
+        console.log('Replay: loading hand', handId);
         fetch(`/api/game/replay?hand_id=${handId}`)
-            .then(r => r.json())
+            .then(r => {
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return r.json();
+            })
             .then(data => {
                 if (data.error) { alert(data.error); return; }
+                console.log('Replay: loaded, actions:', data.actions?.length,
+                    'snapshots:', data.step_snapshots?.length);
                 this._replayData = data;
                 this._replayStep = 0;
                 this._replayPlaying = false;
@@ -275,7 +289,11 @@ const App = {
                 Controls.disableAll();
                 Controls.setStatus('🔄 回放模式 — 手牌 #' + data.hand_id);
                 const overlay = document.getElementById('replay-overlay');
-                if (overlay) overlay.classList.add('replay-active');
+                if (overlay) {
+                    overlay.classList.add('replay-active');
+                    // 清除残留的错误信息
+                    document.getElementById('replay-action-info').textContent = '';
+                }
                 document.getElementById('hand-counter-toolbar').textContent = `回放 #${data.hand_id}`;
                 document.getElementById('btn-replay-history').textContent = '退出回放';
 
@@ -283,9 +301,14 @@ const App = {
                     this._renderReplayTable();
                 } catch (e) {
                     console.error('渲染回放失败:', e);
+                    document.getElementById('replay-action-info').innerHTML =
+                        '<span style="color:var(--red);">渲染失败，请刷新页面重试</span>';
                 }
             })
-            .catch(e => alert('获取回放数据失败: ' + e));
+            .catch(e => {
+                console.error('Replay: load failed', e);
+                alert('加载回放数据失败: ' + e.message);
+            });
     },
 
     /** 退出回放 */
