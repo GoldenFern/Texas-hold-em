@@ -24,19 +24,13 @@ const Table = {
         });
     },
 
-    /** 渲染单张牌的内容 */
+    /** 渲染单张牌的内容 — 使用 SVG 渲染 */
     _renderCardContent(el, cardStr) {
         if (!cardStr || cardStr === '??') {
-            el.innerHTML = '<span style="color:#999">?</span>';
+            el.innerHTML = Cards.renderBack('#333', { className: 'card-svg' });
             return;
         }
-        // cardStr 格式如 "A♠" 或 "As"
-        const rank = cardStr[0];
-        let suitSymbol = cardStr[1] || '';
-        const suitMap = {'s':'♠','h':'♥','d':'♦','c':'♣','♠':'♠','♥':'♥','♦':'♦','♣':'♣'};
-        suitSymbol = suitMap[suitSymbol] || suitSymbol;
-        const isRed = suitSymbol === '♥' || suitSymbol === '♦';
-        el.innerHTML = `<span style="color:${isRed ? '#d32f2f' : '#212121'}">${rank}<br>${suitSymbol}</span>`;
+        el.innerHTML = Cards.renderFromString(cardStr, { className: 'card-svg' });
     },
 
     /** 渲染底池信息 */
@@ -118,13 +112,8 @@ const Table = {
                     ${betDisplay}
                     <div class="hole-cards-mini">
                         ${(p.hole_cards || []).map(c => {
-                            if (c === '??' || !c) return '<div class="hole-card-mini" style="background:#333;color:#666;">?</div>';
-                            const r = c[0];
-                            const s = c[1] || '';
-                            const sm = {'s':'♠','h':'♥','d':'♦','c':'♣'};
-                            const ss = sm[s] || s;
-                            const red = ss === '♥' || ss === '♦';
-                            return `<div class="hole-card-mini" style="color:${red?'#d32f2f':'#212121'}">${r}${ss}</div>`;
+                            if (c === '??' || !c) return '<div class="hole-card-mini card-back-mini">' + Cards.renderBack('#333', { className: 'card-svg' }) + '</div>';
+                            return '<div class="hole-card-mini">' + Cards.renderFromString(c, { className: 'card-svg' }) + '</div>';
                         }).join('')}
                     </div>
                 </div>
