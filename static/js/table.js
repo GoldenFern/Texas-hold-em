@@ -10,13 +10,29 @@ const Table = {
         this._renderPlayers(state);
     },
 
+    /**
+     * 将服务器牌串映射为 PNG 路径。
+     * 服务器格式: "A♠", "T♥", "K♦"  (T=10)
+     * 文件命名:   A_S.png, 10_H.png, K_D.png
+     */
+    _cardImgPath(cardStr) {
+        if (!cardStr || cardStr === '??') return null;
+        let rank = cardStr[0];
+        if (rank === 'T' || rank === 't') rank = '10';
+        const suitChar = cardStr[1] || '';
+        const suitKey = {'♠':'S','♣':'C','♥':'H','♦':'D',
+                         's':'S','c':'C','h':'H','d':'D'}[suitChar] || 'S';
+        return `/static/img/cards/${rank}_${suitKey}.png`;
+    },
+
     /** 渲染公共牌 */
     _renderCommunityCards(cards) {
         const slots = document.querySelectorAll('.community-card');
         slots.forEach((slot, i) => {
             if (i < cards.length && cards[i] !== '??') {
                 slot.className = 'community-card card-revealed';
-                this._renderCardContent(slot, cards[i]);
+                const path = this._cardImgPath(cards[i]);
+                slot.innerHTML = path ? `<img src="${path}" class="card-img" alt="${cards[i]}">` : '';
             } else {
                 slot.className = 'community-card slot';
                 slot.innerHTML = '';
@@ -26,17 +42,12 @@ const Table = {
 
     /** 渲染单张牌的内容 */
     _renderCardContent(el, cardStr) {
-        if (!cardStr || cardStr === '??') {
-            el.innerHTML = '<span style="color:#999">?</span>';
-            return;
+        const path = this._cardImgPath(cardStr);
+        if (path) {
+            el.innerHTML = `<img src="${path}" class="card-img" alt="${cardStr}">`;
+        } else {
+            el.innerHTML = `<img src="/static/img/cards/unknown.png" class="card-img" alt="?">`;
         }
-        // cardStr 格式如 "A♠" 或 "As"
-        const rank = cardStr[0];
-        let suitSymbol = cardStr[1] || '';
-        const suitMap = {'s':'♠','h':'♥','d':'♦','c':'♣','♠':'♠','♥':'♥','♦':'♦','♣':'♣'};
-        suitSymbol = suitMap[suitSymbol] || suitSymbol;
-        const isRed = suitSymbol === '♥' || suitSymbol === '♦';
-        el.innerHTML = `<span style="color:${isRed ? '#d32f2f' : '#212121'}">${rank}<br>${suitSymbol}</span>`;
     },
 
     /** 渲染底池信息 */
@@ -118,13 +129,9 @@ const Table = {
                     ${betDisplay}
                     <div class="hole-cards-mini">
                         ${(p.hole_cards || []).map(c => {
-                            if (c === '??' || !c) return '<div class="hole-card-mini" style="background:#333;color:#666;">?</div>';
-                            const r = c[0];
-                            const s = c[1] || '';
-                            const sm = {'s':'♠','h':'♥','d':'♦','c':'♣'};
-                            const ss = sm[s] || s;
-                            const red = ss === '♥' || ss === '♦';
-                            return `<div class="hole-card-mini" style="color:${red?'#d32f2f':'#212121'}">${r}${ss}</div>`;
+                            const path = this._cardImgPath(c);
+                            if (!path) return '<div class="hole-card-mini hole-card-back"><img src="/static/img/cards/back.png" class="card-img" alt="?"></div>';
+                            return `<div class="hole-card-mini"><img src="${path}" class="card-img" alt="${c}"></div>`;
                         }).join('')}
                     </div>
                 </div>

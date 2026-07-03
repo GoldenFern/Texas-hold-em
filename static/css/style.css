@@ -134,12 +134,19 @@ body {
     margin-bottom: 16px;
 }
 .community-card {
-    width: 60px;
-    height: 86px;
+    width: 64px;
+    height: 90px;
     border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
+}
+.community-card .card-img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
 }
 .community-card.slot {
     background: rgba(255,255,255,0.08);
@@ -147,11 +154,9 @@ body {
     border-radius: 8px;
 }
 .community-card.card-revealed {
-    background: var(--card-bg);
-    border: 2px solid #ccc;
-    font-size: 1.4em;
-    font-weight: bold;
-    box-shadow: 2px 4px 12px rgba(0,0,0,0.3);
+    background: transparent;
+    border: none;
+    box-shadow: 2px 4px 14px rgba(0,0,0,0.4);
 }
 
 /* ---- 底池显示 ---- */
@@ -254,16 +259,20 @@ body {
     justify-content: center;
 }
 .hole-card-mini {
-    width: 28px;
-    height: 40px;
+    width: 30px;
+    height: 42px;
     border-radius: 3px;
-    background: var(--card-bg);
-    font-size: 0.7em;
-    font-weight: bold;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid #ccc;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.hole-card-mini.hole-card-back {
+    background: #1A1919;
+}
+.hole-card-mini .card-img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
 }
 
 /* ---- 动作面板 ---- */
