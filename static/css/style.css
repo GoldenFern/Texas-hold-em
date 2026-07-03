@@ -259,11 +259,11 @@ body {
     justify-content: center;
 }
 .hole-card-mini {
-    width: 32px;
-    height: 46px;
-    border-radius: 3px;
+    width: 48px;
+    height: 68px;
+    border-radius: 4px;
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
 }
 .hole-card-mini.hole-card-back {
     background: #1A1919;
@@ -584,95 +584,7 @@ body {
     to   { filter: drop-shadow(0 0 16px var(--gold-light)); }
 }
 
-/* ---- 回放面板 ---- */
-.replay-content {
-    min-width: 450px;
-    max-width: 550px;
-}
-.replay-players {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 12px;
-    font-size: 13px;
-}
-.replay-players .rp-player {
-    background: #2a2a3e;
-    padding: 4px 10px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-.replay-players .rp-player .rp-cards {
-    font-family: monospace;
-    letter-spacing: 2px;
-}
-.replay-timeline {
-    max-height: 200px;
-    overflow-y: auto;
-    margin-bottom: 10px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px;
-    background: #111;
-}
-.replay-timeline .rp-step {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 13px;
-    font-family: monospace;
-    color: #999;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-.replay-timeline .rp-step:hover { background: #222; }
-.replay-timeline .rp-step.current {
-    background: var(--blue-dark);
-    color: #fff;
-    font-weight: bold;
-}
-.replay-timeline .rp-step.past { color: #ccc; }
-.replay-timeline .rp-step .rp-step-num {
-    display: inline-block;
-    width: 28px;
-    text-align: right;
-    color: #666;
-}
-.replay-timeline .rp-step.current .rp-step-num { color: var(--gold-light); }
-.replay-controls {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-.replay-step-counter {
-    margin-left: auto;
-    font-size: 13px;
-    color: var(--text-secondary);
-    font-family: monospace;
-}
-.replay-action-info {
-    margin-top: 8px;
-    padding: 8px 12px;
-    background: #1a1a2e;
-    border-radius: 6px;
-    font-size: 14px;
-    text-align: center;
-}
-.replay-action-info .rp-action-player {
-    color: var(--gold);
-    font-weight: bold;
-}
-.replay-action-info .rp-action-type {
-    color: #fff;
-    font-weight: bold;
-}
-
-/* 回放覆盖层 */
+/* ---- 回放覆盖层 ---- */
 .replay-overlay {
     display: none;
     position: fixed;
@@ -693,6 +605,35 @@ body {
     align-items: center;
     gap: 8px;
 }
+
+/* 回放覆盖层激活状态 */
+.replay-overlay.replay-active {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+/* 回放进度条 */
+#replay-progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #333;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+/* 回放速度选择器 */
+#replay-speed {
+    padding: 2px 4px;
+    background: #222;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-primary);
+    font-size: 10px;
+    cursor: pointer;
+}
+#replay-speed:hover { border-color: var(--gold); }
 
 /* ---- 响应式 ---- */
 @media (max-width: 900px) {

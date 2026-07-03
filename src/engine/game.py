@@ -35,6 +35,7 @@ class Action:
     action_type: ActionType
     amount: int = 0  # 下注/加注金额（对于 fold/check 为 0）
     is_all_in: bool = False
+    phase: "GamePhase | None" = None  # 该动作发生时的游戏阶段
 
     def __repr__(self) -> str:
         parts = [f"{self.player_name}: {self.action_type.name}"]
@@ -57,6 +58,7 @@ class HandHistory:
     winners: Dict[str, int]  # player_name → amount_won
     winning_hands: Dict[str, HandResult]
     pot_total: int
+    step_snapshots: List[dict] = field(default_factory=list)  # 每一步的中间状态快照
 
 
 class GameState:
@@ -96,6 +98,7 @@ class GameState:
         self.min_raise: int = big_blind  # 最小加注额
         self.actions_this_round: List[Action] = []
         self.all_actions: List[Action] = []
+        self._step_snapshots: List[dict] = []  # 回放用：每步的中间状态
         self.hand_history: List[HandHistory] = []
         self.winners: Dict[str, int] = {}
         self.winning_hands: Dict[str, HandResult] = {}
@@ -132,6 +135,7 @@ class GameState:
         self.min_raise = self.big_blind
         self.actions_this_round = []
         self.all_actions = []
+        self._step_snapshots = []  # 回放快照重置
         self.winners = {}
         self.winning_hands = {}
 
@@ -163,6 +167,9 @@ class GameState:
         self.current_player_index = self._get_first_to_act()
         self._emit("hand_started", self.hand_id)
         self._emit("phase_changed", self.phase)
+
+        # 记录初始快照（发牌后、首次行动前，step 0）
+        self._step_snapshots.append(self._capture_snapshot())
 
     def _move_dealer(self) -> None:
         """庄位顺时针移动。"""
@@ -294,12 +301,13 @@ class GameState:
         history = HandHistory(
             hand_id=self.hand_id,
             players=[p.name for p in self.players],
-            hole_cards={p.name: list(p.hole_cards) for p in active_players},
+            hole_cards={p.name: list(p.hole_cards) for p in self.players},
             community_cards=list(self.community_cards),
             actions=list(self.all_actions),
             winners=dict(self.winners),
             winning_hands=dict(self.winning_hands),
             pot_total=self.pot.total,
+            step_snapshots=list(self._step_snapshots),
         )
         self.hand_history.append(history)
         self._emit("hand_finished", history)
@@ -481,6 +489,7 @@ class GameState:
 
         self.all_actions.append(action)
         self.actions_this_round.append(action)
+        action.phase = self.phase  # 记录动作发生时的游戏阶段
 
         if action.action_type == ActionType.FOLD:
             player.fold()
@@ -544,6 +553,9 @@ class GameState:
 
         self._emit("player_action", action)
 
+        # 捕获快照（行动执行后的状态）
+        self._step_snapshots.append(self._capture_snapshot())
+
         # 检查是否所有活跃玩家都已行动且下注平齐
         if self._is_round_complete():
             self._finish_round()
@@ -605,12 +617,13 @@ class GameState:
         history = HandHistory(
             hand_id=self.hand_id,
             players=[p.name for p in self.players],
-            hole_cards={p.name: list(p.hole_cards) for p in active_players},
+            hole_cards={p.name: list(p.hole_cards) for p in self.players},
             community_cards=list(self.community_cards),
             actions=list(self.all_actions),
             winners=dict(self.winners),
             winning_hands=dict(self.winning_hands),
             pot_total=total_pot,
+            step_snapshots=list(self._step_snapshots),
         )
         self.hand_history.append(history)
         self._emit("hand_finished", history)
@@ -685,6 +698,29 @@ class GameState:
     # ================================================================
     # 获取可序列化的状态快照（供前端）
     # ================================================================
+
+    def _capture_snapshot(self) -> dict:
+        """捕获当前游戏状态的快照，用于回放渐进式渲染。"""
+        return {
+            "pot_total": self.pot.total,
+            "phase": self.phase.name,
+            "community_cards": [str(c) for c in self.community_cards],
+            "players": [
+                {
+                    "name": p.name,
+                    "seat": p.seat,
+                    "chips": p.chips,
+                    "status": p.status.name,
+                    "current_bet": p.current_bet,
+                    "total_bet": p.total_bet,
+                    "is_dealer": p.is_dealer,
+                    "is_small_blind": p.is_small_blind,
+                    "is_big_blind": p.is_big_blind,
+                    "hole_cards": [str(c) for c in p.hole_cards],
+                }
+                for p in self.players
+            ],
+        }
 
     def to_dict(self, for_player: Optional[str] = None, reveal_all: bool = False) -> dict:
         """将游戏状态序列化为字典（供 API 返回）。

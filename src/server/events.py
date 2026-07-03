@@ -374,17 +374,24 @@ class GameManager:
             # 构建阶段化的回放数据
             community_cards = [str(c) for c in history.community_cards]
             # 推断每个阶段开始的动作索引（翻牌前→翻牌→转牌→河牌）
-            # 简化：根据社区牌数量推断（0→3→4→5）
             phase_starts = [0]  # PRE_FLOP 从第 0 个动作开始
-            cc_count = 0
-            for i, a in enumerate(history.actions):
-                # 每次有新社区牌时记录阶段边界
-                new_cc = min(len(community_cards), cc_count + (3 if cc_count == 0 else 1))
-                if i > 0 and new_cc > cc_count and cc_count < len(community_cards):
-                    phase_starts.append(i)
-                    cc_count = new_cc
-                elif i == 0:
-                    cc_count = 0
+            if history.actions and getattr(history.actions[0], 'phase', None) is not None:
+                # 优先使用动作上记录的 phase 判断阶段切换
+                current_phase = history.actions[0].phase
+                for i, a in enumerate(history.actions[1:], start=1):
+                    if a.phase != current_phase:
+                        phase_starts.append(i)
+                        current_phase = a.phase
+            else:
+                # 兜底：根据社区牌数量推断（兼容旧数据）
+                cc_count = 0
+                for i in range(1, len(history.actions)):
+                    new_cc = min(len(community_cards), cc_count + (3 if cc_count == 0 else 1))
+                    if new_cc > cc_count and cc_count < len(community_cards):
+                        phase_starts.append(i)
+                        cc_count = new_cc
+                    if cc_count >= len(community_cards):
+                        break
 
             replay = {
                 "hand_id": history.hand_id,
@@ -410,8 +417,13 @@ class GameManager:
                 "winners": dict(history.winners),
                 "winning_hands": {n: str(h) for n, h in history.winning_hands.items()},
                 "pot_total": history.pot_total,
+                "step_snapshots": getattr(history, 'step_snapshots', []),
             }
             self._replay_history.append(replay)
+
+            # 限制回放历史内存（最多保留 100 手）
+            if len(self._replay_history) > 100:
+                self._replay_history = self._replay_history[-100:]
 
     def continue_game(self) -> None:
         """用户选择继续游戏 —— 开始下一手牌。"""
@@ -433,7 +445,7 @@ class GameManager:
                 "winners": r["winners"],
                 "winning_hands": r["winning_hands"],
                 "pot_total": r["pot_total"],
-                "community_cards": r["community_cards"][-2:] if len(r["community_cards"]) >= 2 else r["community_cards"],
+                "community_cards": r["community_cards"],
             }
             for r in self._replay_history[-50:]  # 最近 50 手
         ]

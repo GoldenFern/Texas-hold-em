@@ -169,6 +169,57 @@ const App = {
         document.getElementById('btn-replay-next').addEventListener('click', () => this._stepReplay(1));
         document.getElementById('btn-replay-reset').addEventListener('click', () => this._resetReplay());
 
+        // 回放速度选择
+        const speedSel = document.getElementById('replay-speed');
+        if (speedSel) {
+            speedSel.addEventListener('change', (e) => {
+                this._replaySpeed = parseInt(e.target.value) || 400;
+            });
+        }
+
+        // 回放进度条点击跳转
+        const progressBar = document.getElementById('replay-progress-container');
+        if (progressBar) {
+            progressBar.addEventListener('click', (e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const pct = (e.clientX - rect.left) / rect.width;
+                const max = this._replayData?.actions?.length || 0;
+                if (max > 0) {
+                    const targetStep = Math.round(pct * max);
+                    this._pauseReplay();
+                    this._replayStep = Math.max(0, Math.min(targetStep, max));
+                    this._renderReplayTable();
+                }
+            });
+        }
+
+        // 键盘快捷键（仅在回放模式）
+        document.addEventListener('keydown', (e) => {
+            if (!this._replayActive) return;
+            // 跳过输入框中的按键
+            const tag = e.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            switch (e.key) {
+                case ' ':
+                    e.preventDefault();
+                    if (this._replayPlaying) this._pauseReplay();
+                    else this._startReplay();
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    this._stepReplay(1);
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    this._stepReplay(-1);
+                    break;
+                case 'r':
+                case 'R':
+                    if (!e.ctrlKey && !e.metaKey) this._resetReplay();
+                    break;
+            }
+        });
+
         // 动作按钮
         Controls.bindEvents(this);
     },
@@ -180,9 +231,13 @@ const App = {
     _replayPlaying: false,
     _replayTimer: null,
     _replayActive: false,      // 是否处于回放模式
+    _replaySpeed: 400,         // 播放间隔（毫秒）
+    _replayLoading: false,     // 防止重复加载
 
     /** 打开回放面板（handId 可选，默认最近一手） */
     _openReplay(handId) {
+        if (this._replayLoading) return;
+        this._replayLoading = true;
         fetch('/api/game/replays')
             .then(r => r.json())
             .then(list => {
@@ -200,7 +255,8 @@ const App = {
                 selector.value = targetId;
                 this._loadReplayHand(targetId);
             })
-            .catch(e => alert('获取回放列表失败: ' + e));
+            .catch(e => alert('获取回放列表失败: ' + e))
+            .finally(() => { this._replayLoading = false; });
     },
 
     /** 加载指定手牌的回放数据 */
@@ -219,12 +275,7 @@ const App = {
                 Controls.disableAll();
                 Controls.setStatus('🔄 回放模式 — 手牌 #' + data.hand_id);
                 const overlay = document.getElementById('replay-overlay');
-                if (overlay) {
-                    overlay.style.display = 'flex';
-                    overlay.style.flexDirection = 'column';
-                    overlay.style.alignItems = 'center';
-                    overlay.style.gap = '6px';
-                }
+                if (overlay) overlay.classList.add('replay-active');
                 document.getElementById('hand-counter-toolbar').textContent = `回放 #${data.hand_id}`;
                 document.getElementById('btn-replay-history').textContent = '退出回放';
 
@@ -242,10 +293,13 @@ const App = {
         this._pauseReplay();
         this._replayActive = false;
         const overlay = document.getElementById('replay-overlay');
-        if (overlay) overlay.style.display = 'none';
+        if (overlay) {
+            overlay.classList.remove('replay-active');
+            overlay.style.display = 'none';
+        }
         document.getElementById('btn-replay-history').textContent = '🔄 历史回放';
         document.getElementById('hand-counter-toolbar').textContent = this.gameState ? `手牌 #${this.gameState.hand_id}` : '等待开始';
-        Controls.setStatus('');
+        Controls.setStatus('已退出回放');
         // 恢复牌桌
         try {
             if (this.gameState) {
@@ -264,53 +318,78 @@ const App = {
         const max = (data.actions || []).length;
         const step = Math.min(this._replayStep, max);
 
-        // 确定当前阶段和可见社区牌
-        const boundaries = data.phase_boundaries || [0];
-        let phaseIdx = 0;
+        // --- 优先使用步进快照 ---
+        const snapshots = data.step_snapshots || [];
+        const snapshot = (snapshots.length > 0)
+            ? snapshots[Math.min(step, snapshots.length - 1)]
+            : null;
+
+        let phaseName = 'PRE_FLOP';
         let visibleCards = [];
-        for (let i = boundaries.length - 1; i >= 0; i--) {
-            if (step >= boundaries[i]) { phaseIdx = i; break; }
+        let potTotal = data.pot_total;
+
+        if (snapshot) {
+            // 从快照获取实时数据
+            phaseName = snapshot.phase;
+            visibleCards = snapshot.community_cards;
+            potTotal = snapshot.pot_total;
+        } else {
+            // 兜底：旧 phase_boundaries 逻辑
+            const boundaries = data.phase_boundaries || [0];
+            const phaseNamesArr = ['PRE_FLOP', 'FLOP', 'TURN', 'RIVER'];
+            let phaseIdx = 0;
+            for (let i = boundaries.length - 1; i >= 0; i--) {
+                if (step >= boundaries[i]) { phaseIdx = i; break; }
+            }
+            phaseName = phaseNamesArr[phaseIdx] || 'PRE_FLOP';
+            if (phaseIdx >= 1) visibleCards = data.community_cards.slice(0, 3);
+            if (phaseIdx >= 2) visibleCards = data.community_cards.slice(0, 4);
+            if (phaseIdx >= 3) visibleCards = data.community_cards.slice(0, 5);
+            if (step >= max) visibleCards = data.community_cards;
         }
-        if (phaseIdx >= 1) visibleCards = data.community_cards.slice(0, 3);
-        if (phaseIdx >= 2) visibleCards = data.community_cards.slice(0, 4);
-        if (phaseIdx >= 3) visibleCards = data.community_cards.slice(0, 5);
-        if (step >= max) visibleCards = data.community_cards;  // 结束时显示全部
 
-        const phaseNames = ['PRE_FLOP', 'FLOP', 'TURN', 'RIVER'];
-
-        // 构建虚假 game state 供 Table.render 使用
+        // 当前展示的动作
         const currentAction = step < max ? data.actions[step] : null;
         const actingPlayer = currentAction ? currentAction.player : null;
 
+        // 从快照构建玩家状态表
+        const playerStates = {};
+        if (snapshot) {
+            snapshot.players.forEach(ps => { playerStates[ps.name] = ps; });
+        }
+
+        // 构建 fake game state（实时数据来自快照）
         const fakeState = {
             hand_id: data.hand_id,
-            phase: step >= max ? 'FINISHED' : (phaseNames[phaseIdx] || 'PRE_FLOP'),
+            phase: step >= max ? 'FINISHED' : phaseName,
             community_cards: visibleCards,
-            pot_total: data.pot_total,
-            current_bet: 0,
+            pot_total: potTotal,
+            current_bet: playerStates[actingPlayer]?.current_bet || 0,
             dealer_index: -1,
             current_player_index: -1,
             betting_structure: 'no_limit',
             small_blind: 0,
             big_blind: 0,
             ante: 0,
-            players: data.players.map(p => ({
-                name: p.name,
-                chips: 0,  // 回放中不显示精确筹码
-                seat: 0,
-                status: actingPlayer === p.name ? 'ACTIVE' : 'ACTIVE',
-                current_bet: 0,
-                total_bet: 0,
-                is_dealer: false,
-                is_small_blind: false,
-                is_big_blind: false,
-                is_human: p.is_human,
-                hands_won: 0,
-                total_won: 0,
-                hole_cards: p.hole_cards || [],  // 所有底牌可见
-                // 额外的回放标记
-                _replay_highlight: actingPlayer === p.name,
-            })),
+            players: data.players.map(p => {
+                const ps = playerStates[p.name] || {};
+                return {
+                    name: p.name,
+                    chips: ps.chips !== undefined ? ps.chips : 0,
+                    seat: ps.seat !== undefined ? ps.seat : 0,
+                    status: ps.status || 'ACTIVE',
+                    current_bet: ps.current_bet || 0,
+                    total_bet: ps.total_bet || 0,
+                    is_dealer: ps.is_dealer || false,
+                    is_small_blind: ps.is_small_blind || false,
+                    is_big_blind: ps.is_big_blind || false,
+                    is_human: p.is_human,
+                    hands_won: 0,
+                    total_won: 0,
+                    hole_cards: p.hole_cards || [],
+                    _replay_highlight: actingPlayer === p.name,
+                };
+            }),
             winners: step >= max ? data.winners : {},
             legal_actions: [],
             _is_replay: true,
@@ -318,15 +397,22 @@ const App = {
 
         Table.render(fakeState);
 
-        // 更新回放信息栏
+        // 更新步数显示
         document.getElementById('replay-step-counter').textContent =
             `${Math.min(step, max)} / ${max}`;
 
+        // 更新进度条
+        const progressFill = document.getElementById('replay-progress-fill');
+        if (progressFill) {
+            const pct = max > 0 ? (step / max) * 100 : 0;
+            progressFill.style.width = pct + '%';
+        }
+
+        // 更新信息栏
         let infoHTML = '';
         if (step < max && currentAction) {
             const actionLabel = this._formatAction(currentAction);
-            const phaseLabel = phaseNames[phaseIdx] || '?';
-            infoHTML = `<span style="color:var(--gold);">${phaseLabel}</span> →
+            infoHTML = `<span style="color:var(--gold);">${phaseName}</span> →
                 <b>${currentAction.player}</b> ${actionLabel}`;
         } else {
             const winners = data.winners || {};
@@ -366,7 +452,7 @@ const App = {
         if (this._replayStep < max) {
             this._renderReplayTable();
             this._replayStep++;
-            this._replayTimer = setTimeout(() => this._replayAdvance(), 1200);
+            this._replayTimer = setTimeout(() => this._replayAdvance(), this._replaySpeed || 400);
         } else {
             this._renderReplayTable();
             this._pauseReplay();
