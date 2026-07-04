@@ -727,3 +727,38 @@ class TestOddChipDistribution:
         amounts = list(game.winners.values())
         assert sum(amounts) == 100
         assert max(amounts) - min(amounts) <= 1
+
+
+class TestReplaySnapshots:
+    """回放快照：全下快速发牌后终局数据应完整。"""
+
+    def test_all_in_runout_final_snapshot_has_full_board(self) -> None:
+        """全员全下时，摊牌快照须含 5 张公共牌（回放最后一步依赖此数据）。"""
+        players = make_players(["A", "B", "C"])
+        game = GameState(players)
+        game.start_new_hand()
+
+        for _ in range(40):
+            if game.phase == GamePhase.FINISHED:
+                break
+            cp = game.players[game.current_player_index]
+            if cp.status != PlayerStatus.ACTIVE:
+                continue
+            legal = game.get_legal_actions(cp)
+            if ActionType.RAISE in legal:
+                game.apply_action(
+                    Action(cp.name, ActionType.RAISE, amount=cp.chips + cp.current_bet)
+                )
+            elif ActionType.CALL in legal:
+                game.apply_action(Action(cp.name, ActionType.CALL))
+            elif ActionType.CHECK in legal:
+                game.apply_action(Action(cp.name, ActionType.CHECK))
+            else:
+                game.apply_action(Action(cp.name, ActionType.FOLD))
+
+        assert game.phase == GamePhase.FINISHED
+        history = game.hand_history[-1]
+        assert len(history.community_cards) == 5
+        assert len(history.step_snapshots) > len(history.actions)
+        final_snap = history.step_snapshots[-1]
+        assert len(final_snap["community_cards"]) == 5
