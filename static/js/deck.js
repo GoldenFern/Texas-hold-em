@@ -89,7 +89,7 @@ const DeckSkin = {
 
     /** 切换皮肤后重绘牌桌（A1：立即生效） */
     refreshDisplay() {
-        if (window.App && App.gameState) {
+        if (typeof App !== 'undefined' && App.gameState) {
             Table.render(App.gameState);
             if (typeof Controls !== 'undefined' && Controls.update) {
                 Controls.update(App.gameState);

@@ -573,5 +573,8 @@ const App = {
     },
 };
 
+// 供其他脚本（ui.js / deck.js）通过 window.App 访问
+window.App = App;
+
 // 启动
 document.addEventListener('DOMContentLoaded', () => App.init());

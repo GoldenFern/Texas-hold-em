@@ -20,8 +20,8 @@ const UI = {
             historyList.addEventListener('click', (e) => {
                 const item = e.target.closest('.history-item');
                 if (!item) return;
-                const handId = parseInt(item.dataset.handId);
-                if (handId && window.App) {
+                const handId = parseInt(item.dataset.handId, 10);
+                if (!Number.isNaN(handId) && typeof App !== 'undefined') {
                     App._openReplay(handId);
                 }
             });
@@ -182,7 +182,7 @@ const UI = {
                     </div>
                 `).join('');
                 // 重新渲染后恢复当前回放条目的高亮
-                if (window.App && App._replayActive && App._replayData) {
+                if (typeof App !== 'undefined' && App._replayActive && App._replayData) {
                     App._highlightHistoryItem(App._replayData.hand_id);
                 }
             })
