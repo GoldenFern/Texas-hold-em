@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from src.engine.card import Card, Cards
 from src.engine.deck import Deck
 from src.engine.hand import HandEvaluator
-from src.utils.constants import Rank, Suit
+from src.utils.constants import HandRank, Rank, Suit
 
 
 class EquityCalculator:
@@ -143,3 +143,63 @@ class EquityCalculator:
         hand_b = Card.from_str_multi(hand_b_str)
         win_a, win_b, tie = self.heads_up_equity(hand_a, hand_b)
         return {"win_a": win_a, "win_b": win_b, "tie": tie}
+
+
+# ================================================================
+# 牌型概率计算 —— 实时 Monte Carlo
+# ================================================================
+
+def calculate_hand_type_probs(
+    hole_cards: Cards,
+    community_cards: Optional[Cards] = None,
+    num_simulations: int = 5000,
+) -> Dict[str, float]:
+    """计算凑到各种牌型的条件概率。
+
+    基于已知的底牌和公共牌，通过蒙特卡洛模拟估计最终牌型的概率分布。
+    在河牌圈（5 张公共牌全知）时直接评估，无需模拟。
+
+    Args:
+        hole_cards: 底牌（2 张）。
+        community_cards: 已知的公共牌（0–5 张）。
+        num_simulations: 蒙特卡洛模拟次数（默认 5000）。
+
+    Returns:
+        {牌型中文名: 概率百分比} 的字典，按牌型等级降序排列。
+    """
+    community = list(community_cards or [])
+    all_known = list(hole_cards) + community
+
+    # 河牌圈：所有牌已知，直接评估
+    if len(community) == 5:
+        result = HandEvaluator.evaluate(all_known)
+        target_rank = result.hand_rank
+        probs: Dict[str, float] = {}
+        for rank in HandRank:
+            probs[rank.display_name] = 100.0 if rank == target_rank else 0.0
+        return probs
+
+    # 排除已知牌
+    known_set = set(all_known)
+    remaining = [
+        Card(rank=r, suit=s)
+        for r, s in itertools.product(Rank, Suit)
+        if Card(rank=r, suit=s) not in known_set
+    ]
+
+    needed = 5 - len(community)
+
+    # 初始化各牌型计数器
+    counts = {rank: 0 for rank in HandRank}
+
+    rng = random.Random()
+    for _ in range(num_simulations):
+        sim_community = community + rng.sample(remaining, needed)
+        result = HandEvaluator.evaluate(hole_cards + sim_community)
+        counts[result.hand_rank] += 1
+
+    # 返回结果（从强到弱排列）
+    return {
+        rank.display_name: round(counts[rank] / num_simulations * 100, 1)
+        for rank in reversed(HandRank)
+    }

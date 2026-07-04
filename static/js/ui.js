@@ -43,8 +43,8 @@ const UI = {
         // 底池赔率
         this._updatePotOdds(state, humanPlayer);
 
-        // 听牌信息
-        this._updateDrawInfo(state, humanPlayer);
+        // 牌型概率
+        this._updateHandTypeProbs(state, humanPlayer);
     },
 
     _updateHandStrength(state, player) {
@@ -100,44 +100,54 @@ const UI = {
         }
     },
 
-    _updateDrawInfo(state, player) {
-        // 简单的听牌检测（前端版）
-        const community = (state.community_cards || []).filter(c => c !== '??');
-        const hole = (player.hole_cards || []).filter(c => c !== '??');
-        const all = [...hole, ...community];
+    _updateHandTypeProbs(state, player) {
+        const probs = state.hand_type_probs;
+        const container = document.getElementById('hand-type-probs');
+        const phaseLabel = document.getElementById('draw-phase-label');
 
-        if (community.length < 3) {
-            document.getElementById('draw-flush').className = 'draw-inactive';
-            document.getElementById('draw-flush').textContent = '同花听牌: 翻牌后可见';
-            document.getElementById('draw-straight').className = 'draw-inactive';
-            document.getElementById('draw-straight').textContent = '顺子听牌: 翻牌后可见';
+        if (!probs || Object.keys(probs).length === 0) {
+            container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            if (phaseLabel) phaseLabel.textContent = '';
             return;
         }
 
-        // 同花检测
-        const suits = {};
-        all.forEach(c => {
-            const s = c[1] || c[0];
-            suits[s] = (suits[s] || 0) + 1;
-        });
-        const flushDraw = Object.values(suits).some(n => n >= 4);
-        document.getElementById('draw-flush').textContent =
-            '同花听牌: ' + (flushDraw ? '是 ✓' : '否');
-        document.getElementById('draw-flush').className = flushDraw ? 'draw-active' : 'draw-inactive';
-
-        // 顺子检测（简化）
-        const rankOrder = '23456789TJQKA';
-        const rankVals = all.map(c => rankOrder.indexOf(c[0])).filter(v => v >= 0).sort((a,b)=>a-b);
-        let straightDraw = false;
-        for (let i = 0; i < rankVals.length - 3; i++) {
-            if (rankVals[i+3] - rankVals[i] <= 4) {
-                straightDraw = true;
-                break;
-            }
+        // 显示当前阶段标签
+        const community = (state.community_cards || []).filter(c => c !== '??');
+        const phaseNames = {0: '翻牌前', 1: '翻牌前', 2: '翻牌', 3: '转牌', 4: '河牌'};
+        const phaseVal = state.phase === 'PRE_FLOP' ? 1
+                       : state.phase === 'FLOP' ? 2
+                       : state.phase === 'TURN' ? 3
+                       : state.phase === 'RIVER' ? 4
+                       : state.phase === 'SHOWDOWN' ? 4 : 0;
+        if (phaseLabel) {
+            phaseLabel.textContent = '· ' + (phaseNames[phaseVal] || '');
         }
-        document.getElementById('draw-straight').textContent =
-            '顺子听牌: ' + (straightDraw ? '是 ✓' : '否');
-        document.getElementById('draw-straight').className = straightDraw ? 'draw-active' : 'draw-inactive';
+
+        // 牌型显示顺序（从强到弱）
+        const orderedKeys = [
+            '皇家同花顺', '同花顺', '四条', '葫芦', '同花',
+            '顺子', '三条', '两对', '一对', '高牌'
+        ];
+
+        // 按 order 排列 probs
+        const entries = orderedKeys
+            .filter(k => k in probs)
+            .map(k => [k, probs[k]]);
+
+        container.innerHTML = entries.map(([name, pct]) => {
+            const barClass = pct >= 50 ? 'htp-prob-high'
+                           : pct >= 20 ? 'htp-prob-mid'
+                           : pct > 0 ? 'htp-prob-low'
+                           : 'htp-prob-zero';
+            const pctClass = pct > 0 ? 'htp-pct-positive' : 'htp-pct-zero';
+            return `<div class="htp-row">
+                <span class="htp-label">${name}</span>
+                <div class="htp-bar-container">
+                    <div class="htp-bar-fill ${barClass}" style="width:${pct}%"></div>
+                </div>
+                <span class="htp-pct ${pctClass}">${pct.toFixed(1)}%</span>
+            </div>`;
+        }).join('');
     },
 
     /** 更新统计面板 */

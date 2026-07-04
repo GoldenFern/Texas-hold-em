@@ -378,15 +378,71 @@ body {
     border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
-/* 听牌 */
-#draw-info {
+/* 牌型概率 */
+#hand-type-probs {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    font-size: 0.8em;
+    gap: 3px;
+    font-size: 0.75em;
+    max-height: 260px;
+    overflow-y: auto;
 }
-.draw-active { color: #2ecc71; }
-.draw-inactive { color: #666; }
+.htp-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.htp-label {
+    width: 72px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+.htp-bar-container {
+    flex: 1;
+    height: 10px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 5px;
+    overflow: hidden;
+    position: relative;
+}
+.htp-bar-fill {
+    height: 100%;
+    border-radius: 5px;
+    transition: width 0.4s ease;
+    background: var(--blue);
+}
+.htp-bar-fill.htp-prob-high  { background: #2ecc71; }
+.htp-bar-fill.htp-prob-mid   { background: #f39c12; }
+.htp-bar-fill.htp-prob-low   { background: #e74c3c; }
+.htp-bar-fill.htp-prob-zero  { background: transparent; }
+.htp-pct {
+    width: 38px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 0.85em;
+    font-family: monospace;
+    color: var(--text-secondary);
+}
+.htp-pct.htp-pct-positive { color: #2ecc71; }
+.htp-pct.htp-pct-zero     { color: #555; }
+
+#draw-info-display h3 {
+    font-size: 0.85em;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.phase-label {
+    font-size: 0.7em;
+    font-weight: normal;
+    color: var(--gold);
+    background: rgba(212,168,67,0.12);
+    padding: 1px 8px;
+    border-radius: 8px;
+}
 
 /* 历史 */
 #history-toolbar {
