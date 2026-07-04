@@ -6,6 +6,6 @@ pytest>=8.0.0
 treys>=0.1.0              # 德州扑克牌力评估（TwoPlusTwo 查表算法）
 # LLM 集成（可选依赖，按需安装）
 # anthropic>=0.30.0      # Claude API
-# openai>=1.0.0          # GPT API
+openai>=1.0.0          # GPT API
 # requests>=2.31.0       # Ollama 本地客户端
 # python-dotenv>=1.0.0   # 环境变量加载

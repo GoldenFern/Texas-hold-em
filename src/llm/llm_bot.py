@@ -26,6 +26,7 @@ from src.engine.player import Player
 from src.llm.client import (
     LLMClient,
     LLMClientFactory,
+    LLMCredentialError,
     LLMError,
     LLMResponse,
     LLMTimeoutError,
@@ -188,6 +189,8 @@ class LLMBot(BotBase):
                         return action, False
             except LLMTimeoutError:
                 logger.warning("主力 LLM 超时，尝试降级链")
+            except LLMCredentialError as e:
+                logger.warning("主力 LLM 未配置 API Key，尝试降级链: %s", e)
             except LLMError as e:
                 logger.warning("主力 LLM 错误: %s", e)
 

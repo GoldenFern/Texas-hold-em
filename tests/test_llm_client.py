@@ -4,14 +4,17 @@ import pytest
 
 from src.llm.client import (
     LLMClientFactory,
+    LLMCredentialError,
     LLMError,
     LLMAPIError,
     LLMParseError,
     LLMResponse,
     LLMTimeoutError,
     MockClient,
+    OpenAIClient,
 )
 from src.llm.config import ProviderConfig
+from src.llm.fallback import FallbackChain
 
 
 class TestMockClient:
@@ -82,6 +85,85 @@ class TestLLMClientFactory:
         config = ProviderConfig(provider="custom_test", model="test")
         client = LLMClientFactory.create(config)
         assert isinstance(client, CustomClient)
+
+
+class TestCredentialHandling:
+    """API Key 缺失时的异常与降级。"""
+
+    def test_openai_client_raises_credential_error_without_key(self) -> None:
+        client = OpenAIClient(ProviderConfig(
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            base_url="https://api.deepseek.com",
+        ))
+        with pytest.raises(LLMCredentialError, match="deepseek"):
+            client.generate("test", "system")
+
+    def test_fallback_chain_skips_missing_credentials(self) -> None:
+        chain = FallbackChain()
+        chain.add_llm_fallback(ProviderConfig(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            base_url="https://api.deepseek.com",
+        ))
+        called = {"count": 0}
+
+        def rule_fallback(game, player) -> None:
+            called["count"] += 1
+            return None
+
+        chain.set_ultimate_fallback(rule_fallback)
+
+        action = chain.execute("prompt", "system", game=None, player=None)  # type: ignore[arg-type]
+        assert action is None
+        assert called["count"] == 1
+
+    def test_traffic_logging_writes_request_and_response(self, capsys) -> None:
+        import os
+
+        from src.llm.client import (
+            _log_llm_request,
+            _log_llm_response,
+            configure_llm_traffic_logging,
+            is_llm_traffic_logging_enabled,
+        )
+
+        configure_llm_traffic_logging(enabled=True)
+        assert is_llm_traffic_logging_enabled()
+        _log_llm_request(
+            "deepseek",
+            "deepseek-v4-pro",
+            "https://api.deepseek.com/v1/chat/completions",
+            {"messages": [{"role": "user", "content": "fold?"}]},
+        )
+        _log_llm_response(
+            "deepseek",
+            "deepseek-v4-pro",
+            text='{"action": "CALL", "amount": 0}',
+            latency_seconds=1.23,
+            input_tokens=120,
+            output_tokens=18,
+        )
+
+        captured = capsys.readouterr()
+        assert "LLM Request" in captured.err
+        assert "LLM Response" in captured.err
+        assert "deepseek-v4-pro" in captured.err
+        assert "fold?" in captured.err
+
+        configure_llm_traffic_logging(enabled=False)
+        assert not is_llm_traffic_logging_enabled()
+        assert "THP_LLM_LOG_TRAFFIC" not in os.environ
+
+        _log_llm_request(
+            "deepseek",
+            "deepseek-v4-pro",
+            "https://api.deepseek.com/v1/chat/completions",
+            {"messages": [{"role": "user", "content": "should not log"}]},
+        )
+        captured_after_disable = capsys.readouterr()
+        assert "LLM Request" not in captured_after_disable.err
+        assert "should not log" not in captured_after_disable.err
 
 
 class TestLLMExceptions:
