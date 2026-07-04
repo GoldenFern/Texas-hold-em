@@ -136,11 +136,10 @@ const Controls = {
 
     /** 手牌完成后显示结果和继续/结束按钮 */
     showHandResult(data) {
-        const winners = data.winners || {};
-        const hands = data.winning_hands || {};
-        const winnerText = Object.entries(winners)
-            .map(([n, amt]) => `${n} +$${amt}${hands[n] ? ' (' + hands[n] + ')' : ''}`)
-            .join(', ');
+        const winners = (data.players || []).filter(p => p.is_winner);
+        const winnerText = winners.map(w =>
+            `${w.name} +$${w.net_profit}${w.hand_description ? ' (' + w.hand_description + ')' : ''}`
+        ).join(', ');
 
         console.log('[Controls] 手牌完成:', data.hand_id, winnerText);
         this.setStatus(`🏆 手牌 #${data.hand_id} 结束 — 赢家: ${winnerText}`);

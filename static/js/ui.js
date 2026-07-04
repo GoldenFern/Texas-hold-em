@@ -172,7 +172,10 @@ const UI = {
                 const items = Array.isArray(data) ? data : [];
                 list.innerHTML = items.map(h => `
                     <div class="history-item" data-hand-id="${h.hand_id}">
-                        <strong>Hand #${h.hand_id}</strong><br>
+                        <div class="history-item-header">
+                            <strong>Hand #${h.hand_id}</strong>
+                            <span class="history-item-replay">▶ 回放</span>
+                        </div>
                         底池: $${h.pot_total}<br>
                         赢家: ${Object.entries(h.winners || {}).map(([n, a]) => `${n} (+$${a})`).join(', ')}<br>
                         <small>${(h.actions || []).slice(-3).join('<br>')}</small>
@@ -186,10 +189,110 @@ const UI = {
             .catch(() => {});
     },
 
-    /** 显示结果弹窗 */
+    /** 显示结果弹窗（纯文本，用于 game_over 等场景） */
     showResult(message) {
-        document.getElementById('result-body').innerHTML = `<p>${message}</p>`;
+        const body = document.getElementById('result-body');
+        body.innerHTML = '';  // 清空
+        const p = document.createElement('p');
+        p.textContent = message;
+        p.style.whiteSpace = 'pre-line';
+        body.appendChild(p);
         document.getElementById('modal-result').style.display = 'flex';
+    },
+
+    /** 以牌阵形式展示手牌结果（hand_completed） */
+    showCardResult(data) {
+        const body = document.getElementById('result-body');
+        body.innerHTML = '';
+        document.getElementById('result-title').textContent =
+            `🏆 手牌结果 · Hand #${data.hand_id}`;
+
+        const players = data.players || [];
+        if (players.length === 0) return;
+
+        const container = document.createElement('div');
+        container.className = 'result-players';
+
+        players.forEach(p => {
+            const row = document.createElement('div');
+            row.className = 'result-player-row';
+            if (p.is_winner) row.classList.add('result-player-winner');
+            if (p.is_folded) row.classList.add('result-player-folded');
+
+            // --- 玩家名称 ---
+            const nameEl = document.createElement('div');
+            nameEl.className = 'result-player-name';
+            let nameText = p.name;
+            if (p.is_winner) nameText = '🏅 ' + nameText;
+            if (p.is_folded) nameText += ' (弃牌)';
+            nameEl.textContent = nameText;
+            row.appendChild(nameEl);
+
+            // --- 最佳 5 张牌 ---
+            const cards = p.best_five || [];
+            if (cards.length > 0) {
+                const sorted = [...cards].sort((a, b) => {
+                    const av = this._cardRankValue(a[0]);
+                    const bv = this._cardRankValue(b[0]);
+                    return bv - av;
+                });
+                const cardRow = document.createElement('div');
+                cardRow.className = 'result-cards-row';
+                sorted.forEach(cs => cardRow.appendChild(this._createCardEl(cs)));
+                row.appendChild(cardRow);
+            }
+
+            // --- 牌型描述（中列） ---
+            const descEl = document.createElement('div');
+            descEl.className = 'result-player-desc';
+            descEl.textContent = p.hand_description || '—';
+            row.appendChild(descEl);
+
+            // --- 盈亏金额（右侧） ---
+            const amountEl = document.createElement('div');
+            amountEl.className = 'result-player-amount';
+            const net = p.net_profit;
+            if (net > 0) {
+                amountEl.textContent = `+$${net}`;
+            } else if (net < 0) {
+                amountEl.textContent = `-$${Math.abs(net)}`;
+                amountEl.style.color = '#e74c3c';
+            } else {
+                amountEl.textContent = '$0';
+            }
+            row.appendChild(amountEl);
+
+            container.appendChild(row);
+        });
+
+        body.appendChild(container);
+
+        // --- 底池 ---
+        const potLine = document.createElement('div');
+        potLine.className = 'result-pot-line';
+        potLine.textContent = `底池总额: $${data.pot_total || 0}`;
+        body.appendChild(potLine);
+
+        document.getElementById('modal-result').style.display = 'flex';
+    },
+
+    /** 点数 → 数值 */
+    _cardRankValue(ch) {
+        const map = {'A':14,'K':13,'Q':12,'J':11,'T':10};
+        return map[ch] || parseInt(ch) || 0;
+    },
+
+    /** 创建单张扑克牌 DOM 元素 */
+    _createCardEl(cardStr) {
+        const el = document.createElement('div');
+        el.className = 'card-mini';
+        const path = Table._cardImgPath(cardStr);
+        if (path) {
+            el.innerHTML = `<img src="${path}" class="card-img" alt="${cardStr}">`;
+        } else {
+            el.innerHTML = `<img src="/static/img/cards/aguilar/back.png" class="card-img" alt="?">`;
+        }
+        return el;
     },
 };
 

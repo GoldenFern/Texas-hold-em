@@ -24,7 +24,6 @@
             <!-- 牌桌工具栏 -->
             <div id="table-toolbar">
                 <span id="hand-counter-toolbar">等待开始</span>
-                <button id="btn-replay-history" class="btn btn-sm" style="margin-left:auto;">🔄 历史回放</button>
             </div>
             <div id="poker-table">
                 <!-- 社区牌区 -->
@@ -106,6 +105,10 @@
 
             <!-- 牌局历史面板 -->
             <div id="panel-history" class="tab-content">
+                <div id="history-toolbar">
+                    <span>牌局记录</span>
+                    <button id="btn-replay-recent" class="btn btn-sm">🔄 回放最近一手</button>
+                </div>
                 <div id="history-list"></div>
                 <!-- 回放控件（回放模式时显示） -->
                 <div id="replay-controls" class="replay-controls">
@@ -306,10 +309,10 @@
         <div class="modal-content result-content">
             <h2 id="result-title">🏆 手牌结果</h2>
             <div id="result-body"></div>
-            <div style="margin-top:10px;">
-                <button id="btn-replay-from-result" class="btn btn-sm">🔄 回放本局</button>
+            <div class="result-buttons">
+                <button id="btn-replay-from-result" class="btn btn-sm">回放本局</button>
+                <button id="btn-close-result" class="btn btn-sm btn-primary">继续游戏</button>
             </div>
-            <button id="btn-close-result" class="btn btn-primary">继续</button>
         </div>
     </div>
 

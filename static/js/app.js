@@ -99,13 +99,7 @@ const App = {
 
         this.socket.on('hand_completed', (data) => {
             Controls.showHandResult(data);
-            UI.showResult(
-                `手牌 #${data.hand_id} 结束\n\n` +
-                Object.entries(data.winners || {}).map(([n, amt]) =>
-                    `${n} +$${amt}${(data.winning_hands || {})[n] ? ' (' + data.winning_hands[n] + ')' : ''}`
-                ).join('\n') +
-                `\n\n底池: $${data.pot_total}`
-            );
+            UI.showCardResult(data);
         });
 
         this.socket.on('game_over', (data) => {
@@ -123,8 +117,8 @@ const App = {
             this._refreshBotRows();
         });
 
-        // 历史回放按钮 — 进入回放模式
-        document.getElementById('btn-replay-history').addEventListener('click', () => {
+        // 回放最近一手 — 进入回放模式（由牌局历史面板中的按钮触发）
+        document.getElementById('btn-replay-recent').addEventListener('click', () => {
             this._openReplay();
         });
 
@@ -325,8 +319,6 @@ const App = {
                 // 高亮对应的历史条目
                 this._highlightHistoryItem(data.hand_id);
                 document.getElementById('hand-counter-toolbar').textContent = `回放 #${data.hand_id}`;
-                const btnReplayHistory = document.getElementById('btn-replay-history');
-                if (btnReplayHistory) btnReplayHistory.style.display = 'none';
 
                 try {
                     this._renderReplayTable();
@@ -353,8 +345,6 @@ const App = {
         // 清除历史条目高亮
         document.querySelectorAll('.history-item').forEach(el =>
             el.classList.remove('history-item-active'));
-        const btnReplayHistory = document.getElementById('btn-replay-history');
-        if (btnReplayHistory) btnReplayHistory.style.display = '';
         document.getElementById('hand-counter-toolbar').textContent = this.gameState ? `手牌 #${this.gameState.hand_id}` : '等待开始';
         Controls.setStatus('已退出回放');
         // 恢复牌桌

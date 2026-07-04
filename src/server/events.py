@@ -11,6 +11,7 @@ from flask import Flask
 from flask_socketio import SocketIO
 
 from src.engine.game import Action, ActionType, BettingStructure, GameState
+from src.engine.hand import HandEvaluator
 from src.engine.player import Player
 from src.ai.bots import BotBase, BotFactory, BotStyle
 from src.analysis.reporter import HandReporter
@@ -365,11 +366,31 @@ class GameManager:
         if socketio is None or self.game is None:
             return
         winners = dict(self.game.winners) if self.game.winners else {}
-        hands = {n: str(h) for n, h in (self.game.winning_hands or {}).items()}
+
+        # 为每位玩家计算最佳 5 张牌
+        players_data = []
+        for p in self.game.players:
+            is_folded = p.is_folded or p.is_out
+            best_five: list[str] = []
+            hand_description = ""
+            if p.hole_cards:
+                all_cards = list(p.hole_cards) + self.game.community_cards
+                if len(all_cards) >= 5:
+                    result = HandEvaluator.evaluate(all_cards)
+                    best_five = [c.short_str for c in result.best_five]
+                    hand_description = result.description
+            players_data.append({
+                "name": p.name,
+                "is_folded": is_folded,
+                "is_winner": p.name in winners,
+                "net_profit": winners.get(p.name, 0) - p.total_bet,
+                "best_five": best_five,
+                "hand_description": hand_description,
+            })
+
         socketio.emit("hand_completed", {
             "hand_id": self.game.hand_id,
-            "winners": winners,
-            "winning_hands": hands,
+            "players": players_data,
             "pot_total": self.game.pot.total,
         })
 
