@@ -19,12 +19,12 @@
     --text-secondary: #a0a0a0;
     --border: #333;
     /* 牌面显示尺寸（PNG 强制缩放到此大小） */
-    --card-w-community: 68px;
-    --card-h-community: 98px;
-    --card-w-hole: 48px;
-    --card-h-hole: 68px;
-    --card-w-mini: 36px;
-    --card-h-mini: 50px;
+    --card-w-community: 136px;
+    --card-h-community: 196px;
+    --card-w-hole: 96px;
+    --card-h-hole: 136px;
+    --card-w-mini: 72px;
+    --card-h-mini: 100px;
     --card-bg: #fff;
     --card-red: #d32f2f;
     --card-black: #212121;
