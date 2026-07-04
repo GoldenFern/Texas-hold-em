@@ -71,7 +71,7 @@ class BotProfile:
 BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     BotStyle.TAG: BotProfile(
         style=BotStyle.TAG,
-        vpip_threshold=40,
+        vpip_threshold=50,          # 真实胜率阈值：玩 top ~40% 手牌
         aggression=0.75,
         bluff_frequency=0.15,
         fold_to_raise=0.4,
@@ -82,7 +82,7 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     ),
     BotStyle.LAG: BotProfile(
         style=BotStyle.LAG,
-        vpip_threshold=25,
+        vpip_threshold=42,          # 真实胜率阈值：玩 ~60% 手牌
         aggression=0.9,
         bluff_frequency=0.3,
         fold_to_raise=0.2,
@@ -93,7 +93,7 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     ),
     BotStyle.NIT: BotProfile(
         style=BotStyle.NIT,
-        vpip_threshold=70,
+        vpip_threshold=72,          # 真实胜率阈值：仅 AA/KK/QQ/JJ
         aggression=0.5,
         bluff_frequency=0.02,
         fold_to_raise=0.7,
@@ -104,7 +104,7 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     ),
     BotStyle.CALLING_STATION: BotProfile(
         style=BotStyle.CALLING_STATION,
-        vpip_threshold=0,
+        vpip_threshold=0,           # 不筛牌，全玩
         aggression=0.05,
         bluff_frequency=0.01,
         fold_to_raise=0.03,
@@ -115,7 +115,7 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     ),
     BotStyle.MANIAC: BotProfile(
         style=BotStyle.MANIAC,
-        vpip_threshold=10,
+        vpip_threshold=34,          # 真实胜率阈值：几乎任何两张牌
         aggression=0.95,
         bluff_frequency=0.6,
         fold_to_raise=0.02,
@@ -126,7 +126,7 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     ),
     BotStyle.SHARK: BotProfile(
         style=BotStyle.SHARK,
-        vpip_threshold=35,
+        vpip_threshold=47,          # 真实胜率阈值：玩 top ~35% 手牌
         aggression=0.65,
         bluff_frequency=0.2,
         fold_to_raise=0.35,
@@ -137,7 +137,7 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     ),
     BotStyle.LLM: BotProfile(
         style=BotStyle.LLM,
-        vpip_threshold=35,
+        vpip_threshold=47,          # 同 Shark
         aggression=0.65,
         bluff_frequency=0.2,
         fold_to_raise=0.35,
@@ -297,18 +297,18 @@ class BotBase(ABC):
         flush_draw, straight_draw = has_draw(player.hole_cards, game_state.community_cards)
         has_draw_potential = flush_draw or straight_draw
 
-        # 强牌 (>= 0.6 → 两对或更好)
+        # 强牌 (>= 0.6 → 60%+ 胜率 / 两对或更好)
         if hand_strength >= 0.6:
             if can_raise:
                 if self.rng.random() < profile.aggression:
                     return ActionType.RAISE
             return ActionType.CALL if to_call > 0 else ActionType.CHECK
 
-        # 中等牌力或有听牌
-        if hand_strength >= 0.3 or has_draw_potential:
+        # 中等牌力 (>= 0.45 → 45%+ 胜率) 或有听牌
+        if hand_strength >= 0.45 or has_draw_potential:
             # 计算隐含赔率
             effective_odds = pot_odds * (0.7 if has_draw_potential else 1.0)
-            if effective_odds < 0.35:  # 赔率合适
+            if effective_odds < 0.40:  # 赔率合适
                 if can_raise and self.rng.random() < profile.cbet_frequency:
                     if game_state.phase == GamePhase.FLOP and len(game_state.actions_this_round) == 0:
                         return ActionType.BET  # c-bet
