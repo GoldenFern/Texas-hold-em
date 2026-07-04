@@ -117,13 +117,17 @@ class TestCredentialHandling:
         assert called["count"] == 1
 
     def test_traffic_logging_writes_request_and_response(self, capsys) -> None:
+        import os
+
         from src.llm.client import (
             _log_llm_request,
             _log_llm_response,
             configure_llm_traffic_logging,
+            is_llm_traffic_logging_enabled,
         )
 
         configure_llm_traffic_logging(enabled=True)
+        assert is_llm_traffic_logging_enabled()
         _log_llm_request(
             "deepseek",
             "deepseek-v4-pro",
@@ -144,4 +148,17 @@ class TestCredentialHandling:
         assert "LLM Response" in captured.err
         assert "deepseek-v4-pro" in captured.err
         assert "fold?" in captured.err
+
         configure_llm_traffic_logging(enabled=False)
+        assert not is_llm_traffic_logging_enabled()
+        assert "THP_LLM_LOG_TRAFFIC" not in os.environ
+
+        _log_llm_request(
+            "deepseek",
+            "deepseek-v4-pro",
+            "https://api.deepseek.com/v1/chat/completions",
+            {"messages": [{"role": "user", "content": "should not log"}]},
+        )
+        captured_after_disable = capsys.readouterr()
+        assert "LLM Request" not in captured_after_disable.err
+        assert "should not log" not in captured_after_disable.err
