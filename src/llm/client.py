@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -15,6 +17,97 @@ from typing import Any, Callable, Dict, List, Optional
 from src.llm.config import ProviderConfig
 
 logger = logging.getLogger(__name__)
+_TRAFFIC_LOGGER = logging.getLogger("src.llm.traffic")
+
+_CREDENTIAL_HINTS: Dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY 或 THP_LLM_API_KEY",
+    "openai": "OPENAI_API_KEY 或 THP_LLM_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY 或 THP_LLM_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY 或 THP_LLM_API_KEY",
+    "glm": "GLM_API_KEY 或 THP_LLM_API_KEY",
+    "kimi": "MOONSHOT_API_KEY 或 THP_LLM_API_KEY",
+    "minimax": "MINIMAX_API_KEY 或 THP_LLM_API_KEY",
+    "volcengine": "ARK_API_KEY 或 THP_LLM_API_KEY",
+    "longcat": "LONGCAT_API_KEY 或 THP_LLM_API_KEY",
+}
+
+
+def _credential_error(provider: str) -> LLMCredentialError:
+    """构建 API Key 缺失异常。"""
+    hint = _CREDENTIAL_HINTS.get(provider, "THP_LLM_API_KEY")
+    return LLMCredentialError(f"缺少 {provider} API Key，请设置 {hint}")
+
+
+def _is_credential_error(exc: Exception) -> bool:
+    """判断异常是否由 API Key 缺失/无效引起。"""
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in ("credential", "api_key", "api key", "authentication", "unauthorized")
+    )
+
+
+def is_llm_traffic_logging_enabled() -> bool:
+    """是否向终端输出 LLM 请求/响应。"""
+    val = os.environ.get("THP_LLM_LOG_TRAFFIC", "")
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+def configure_llm_traffic_logging(enabled: bool = True) -> None:
+    """配置 LLM 流量日志输出到终端。"""
+    if enabled:
+        os.environ["THP_LLM_LOG_TRAFFIC"] = "1"
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    _TRAFFIC_LOGGER.setLevel(logging.INFO if enabled else logging.WARNING)
+    _TRAFFIC_LOGGER.handlers.clear()
+    if enabled:
+        _TRAFFIC_LOGGER.addHandler(handler)
+    _TRAFFIC_LOGGER.propagate = False
+
+
+def _format_traffic_block(title: str, body: str) -> str:
+    """格式化终端日志块。"""
+    separator = "─" * 60
+    return f"\n{separator}\n{title}\n{separator}\n{body}\n"
+
+
+def _log_llm_request(
+    provider: str,
+    model: str,
+    endpoint: str,
+    payload: Dict[str, Any],
+) -> None:
+    """记录发往 API 供应商的请求。"""
+    if not is_llm_traffic_logging_enabled():
+        return
+    safe_payload = json.loads(json.dumps(payload, ensure_ascii=False, default=str))
+    body = json.dumps(safe_payload, ensure_ascii=False, indent=2)
+    title = f"LLM Request → {provider} / {model}\nEndpoint: {endpoint}"
+    _TRAFFIC_LOGGER.info("%s", _format_traffic_block(title, body))
+
+
+def _log_llm_response(
+    provider: str,
+    model: str,
+    *,
+    text: str,
+    latency_seconds: float,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    error: str = "",
+) -> None:
+    """记录 API 供应商返回的响应。"""
+    if not is_llm_traffic_logging_enabled():
+        return
+    if error:
+        body = f"ERROR: {error}"
+        title = f"LLM Response ← {provider} / {model} ({latency_seconds:.2f}s)"
+    else:
+        token_line = f"Tokens: in={input_tokens} out={output_tokens}"
+        body = f"{text}\n\n{token_line}"
+        title = f"LLM Response ← {provider} / {model} ({latency_seconds:.2f}s)"
+    _TRAFFIC_LOGGER.info("%s", _format_traffic_block(title, body))
 
 
 @dataclass
@@ -44,6 +137,10 @@ class LLMAPIError(LLMError):
 
 class LLMParseError(LLMError):
     """LLM 响应无法解析。"""
+
+
+class LLMCredentialError(LLMError):
+    """LLM API Key 未配置或无效。"""
 
 
 class LLMClient(ABC):
@@ -106,6 +203,8 @@ class AnthropicClient(LLMClient):
 
     def _get_client(self) -> Any:
         if self._client is None:
+            if not self.config.api_key:
+                raise _credential_error(self.config.provider)
             try:
                 import anthropic
                 self._client = anthropic.Anthropic(api_key=self.config.api_key)
@@ -113,6 +212,10 @@ class AnthropicClient(LLMClient):
                 raise LLMError(
                     "anthropic 包未安装，请运行: pip install anthropic"
                 )
+            except Exception as e:
+                if _is_credential_error(e):
+                    raise _credential_error(self.config.provider) from e
+                raise
         return self._client
 
     def generate(
@@ -133,10 +236,25 @@ class AnthropicClient(LLMClient):
         if system_prompt:
             kwargs["system"] = system_prompt
 
+        _log_llm_request(
+            self.config.provider,
+            self.config.model,
+            "anthropic.messages.create",
+            kwargs,
+        )
+
         start = time.perf_counter()
         try:
             response = client.messages.create(**kwargs)
         except Exception as e:
+            latency = time.perf_counter() - start
+            _log_llm_response(
+                self.config.provider,
+                self.config.model,
+                text="",
+                latency_seconds=latency,
+                error=str(e),
+            )
             raise LLMAPIError(f"Anthropic API 错误: {e}") from e
 
         latency = time.perf_counter() - start
@@ -163,6 +281,14 @@ class AnthropicClient(LLMClient):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             cached_tokens=cached_tokens,
+        )
+        _log_llm_response(
+            self.config.provider,
+            self.config.model,
+            text=text,
+            latency_seconds=latency,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
         self._record_call(result)
         return result
@@ -223,6 +349,8 @@ class OpenAIClient(LLMClient):
 
     def _get_client(self) -> Any:
         if self._client is None:
+            if not self.config.api_key:
+                raise _credential_error(self.config.provider)
             try:
                 import openai
                 kwargs: Dict[str, Any] = {"api_key": self.config.api_key}
@@ -233,6 +361,10 @@ class OpenAIClient(LLMClient):
                 raise LLMError(
                     "openai 包未安装，请运行: pip install openai"
                 )
+            except Exception as e:
+                if _is_credential_error(e):
+                    raise _credential_error(self.config.provider) from e
+                raise
         return self._client
 
     def generate(
@@ -249,6 +381,20 @@ class OpenAIClient(LLMClient):
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
 
+        request_payload = {
+            "model": self.config.model,
+            "messages": messages,
+            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature,
+        }
+        endpoint = self.config.base_url or "https://api.openai.com/v1"
+        _log_llm_request(
+            self.config.provider,
+            self.config.model,
+            f"{endpoint.rstrip('/')}/chat/completions",
+            request_payload,
+        )
+
         start = time.perf_counter()
         try:
             response = client.chat.completions.create(
@@ -258,6 +404,14 @@ class OpenAIClient(LLMClient):
                 temperature=self.config.temperature,
             )
         except Exception as e:
+            latency = time.perf_counter() - start
+            _log_llm_response(
+                self.config.provider,
+                self.config.model,
+                text="",
+                latency_seconds=latency,
+                error=str(e),
+            )
             raise LLMAPIError(f"OpenAI API 错误: {e}") from e
 
         latency = time.perf_counter() - start
@@ -275,8 +429,16 @@ class OpenAIClient(LLMClient):
         result = LLMResponse(
             text=text,
             model=self.config.model,
-            provider="openai",
+            provider=self.config.provider,
             latency_seconds=round(latency, 3),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        _log_llm_response(
+            self.config.provider,
+            self.config.model,
+            text=text,
+            latency_seconds=latency,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
         )
@@ -371,6 +533,14 @@ class OllamaClient(LLMClient):
         if system_prompt:
             payload["system"] = system_prompt
 
+        endpoint = f"{self.config.base_url.rstrip('/')}/api/generate"
+        _log_llm_request(
+            self.config.provider,
+            self.config.model,
+            endpoint,
+            payload,
+        )
+
         start = time.perf_counter()
         try:
             resp = session.post(
@@ -381,6 +551,14 @@ class OllamaClient(LLMClient):
             resp.raise_for_status()
             data = resp.json()
         except Exception as e:
+            latency = time.perf_counter() - start
+            _log_llm_response(
+                self.config.provider,
+                self.config.model,
+                text="",
+                latency_seconds=latency,
+                error=str(e),
+            )
             raise LLMAPIError(f"Ollama API 错误: {e}") from e
 
         latency = time.perf_counter() - start
@@ -393,6 +571,14 @@ class OllamaClient(LLMClient):
             model=self.config.model,
             provider="ollama",
             latency_seconds=round(latency, 3),
+            input_tokens=prompt_eval_count,
+            output_tokens=eval_count,
+        )
+        _log_llm_response(
+            self.config.provider,
+            self.config.model,
+            text=text,
+            latency_seconds=latency,
             input_tokens=prompt_eval_count,
             output_tokens=eval_count,
         )

@@ -57,7 +57,29 @@ class LLMConfig:
     enable_advisor: bool = False
 
 
-# 国内 LLM 提供商预设
+PROVIDER_API_KEY_ENV: Dict[str, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY",
+    "glm": "GLM_API_KEY",
+    "kimi": "MOONSHOT_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    "volcengine": "ARK_API_KEY",
+    "longcat": "LONGCAT_API_KEY",
+}
+
+
+def resolve_provider_api_key(provider: str, explicit_key: str = "") -> str:
+    """按提供商解析 API Key（显式值 > 环境变量）。"""
+    if explicit_key:
+        return explicit_key
+    env_var = PROVIDER_API_KEY_ENV.get(provider, "")
+    if env_var:
+        return os.environ.get(env_var, "")
+    return ""
+
+
 PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "deepseek": {
         "display_name": "DeepSeek（深度求索）",
@@ -147,24 +169,11 @@ def load_config(config_path: Optional[str] = None) -> LLMConfig:
     # 主力后端
     provider = _env("PROVIDER") or json_config.get("provider", "deepseek")
     model = _env("MODEL") or json_config.get("model", "deepseek-v4-pro")
-    # API Key：优先环境变量 THP_LLM_API_KEY，其次提供商专用环境变量，再其次配置文件
-    api_key = _env("API_KEY") or json_config.get("api_key", "")
-    if not api_key:
-        # 根据提供商查找对应的环境变量
-        key_env_map = {
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "deepseek": "DEEPSEEK_API_KEY",
-            "qwen": "DASHSCOPE_API_KEY",
-            "glm": "GLM_API_KEY",
-            "kimi": "MOONSHOT_API_KEY",
-            "minimax": "MINIMAX_API_KEY",
-            "volcengine": "ARK_API_KEY",
-            "longcat": "LONGCAT_API_KEY",
-        }
-        env_var = key_env_map.get(provider, "")
-        if env_var:
-            api_key = os.environ.get(env_var, "")
+    # API Key：优先 THP_LLM_API_KEY / JSON，再按提供商环境变量解析
+    api_key = resolve_provider_api_key(
+        provider,
+        _env("API_KEY") or json_config.get("api_key", ""),
+    )
     base_url = _env("BASE_URL") or json_config.get("base_url", "")
     if not base_url and provider in PROVIDER_PRESETS:
         base_url = PROVIDER_PRESETS[provider]["base_url"]
@@ -185,22 +194,24 @@ def load_config(config_path: Optional[str] = None) -> LLMConfig:
     fb_list = json_config.get("fallbacks", [])
     for fb in fb_list:
         fb_provider = fb.get("provider", "anthropic")
-        fb_api_key = ""
-        if fb_provider == "anthropic":
-            fb_api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        elif fb_provider == "openai":
-            fb_api_key = os.environ.get("OPENAI_API_KEY", "")
+        fb_api_key = resolve_provider_api_key(
+            fb_provider,
+            fb.get("api_key", "") or _env("API_KEY"),
+        )
+        fb_base_url = fb.get("base_url", "")
+        if not fb_base_url and fb_provider in PROVIDER_PRESETS:
+            fb_base_url = PROVIDER_PRESETS[fb_provider]["base_url"]
         config.fallbacks.append(ProviderConfig(
             provider=fb_provider,
             model=fb.get("model", ""),
             api_key=fb_api_key,
-            base_url=fb.get("base_url", ""),
+            base_url=fb_base_url,
             timeout_seconds=float(fb.get("timeout_seconds", 10.0)),
         ))
 
     # 如果没有配置降级链，添加默认
     if not config.fallbacks:
-        haiku_key = os.environ.get("ANTHROPIC_API_KEY", "")
+        haiku_key = resolve_provider_api_key("anthropic")
         config.fallbacks.append(ProviderConfig(
             provider="anthropic",
             model="claude-3-haiku-20240307",
