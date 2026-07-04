@@ -12,9 +12,9 @@ const Table = {
     },
 
     /**
-     * 将服务器牌串映射为 Aguilar SVG 路径。
+     * 将服务器牌串映射为牌面 PNG 路径。
      * 服务器: "A♠", "T♥", "K♦", "2♣"  (T=10, Unicode花色)
-     * Aguilar: ace_of_spades.svg, 10_of_hearts.svg, king_of_hearts2.svg 等
+     * 素材: ace_of_spades.png, 10_of_hearts.png, jack2_of_spades.png 等
      */
     _cardImgPath(cardStr) {
         if (!cardStr || cardStr === '??') return null;
@@ -30,7 +30,7 @@ const Table = {
         const agRank = RANK[rank];
         const agSuit = SUIT[suitChar];
         if (!agRank || !agSuit) return null;
-        return `${AGUILAR}/${agRank}_of_${agSuit}.svg`;
+        return `${AGUILAR}/${agRank}_of_${agSuit}.png`;
     },
 
     /** 渲染公共牌 */
