@@ -1,0 +1,11 @@
+# Conda 环境配置 — 一键复现开发环境
+# 用法: conda env create -f environment.yml
+# 更新: conda env update -f environment.yml --prune
+name: texas-hold-em
+channels:
+  - defaults
+dependencies:
+  - python=3.13
+  - pip
+  - pip:
+      - -r requirements.txt
