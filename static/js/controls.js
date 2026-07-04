@@ -162,9 +162,11 @@ const Controls = {
 
             // 事件委托给 App
             document.getElementById('btn-continue-game').addEventListener('click', () => {
+                document.getElementById('modal-result').style.display = 'none';
                 this._app.socket.emit('continue_game');
             });
             document.getElementById('btn-end-game').addEventListener('click', () => {
+                document.getElementById('modal-result').style.display = 'none';
                 this._app.socket.emit('end_game');
             });
         }

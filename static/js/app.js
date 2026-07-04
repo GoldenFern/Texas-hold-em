@@ -158,9 +158,6 @@ const App = {
         });
 
         // 回放控制
-        document.getElementById('replay-hand-selector').addEventListener('change', (e) => {
-            this._loadReplayHand(parseInt(e.target.value));
-        });
         document.getElementById('btn-replay-play').addEventListener('click', () => {
             if (this._replayPlaying) this._pauseReplay();
             else this._startReplay();
@@ -220,6 +217,19 @@ const App = {
             }
         });
 
+        // 鼠标滚轮切换上下步（仅在回放模式）
+        // 在侧栏历史列表内滚动时不拦截，允许正常浏览
+        let wheelLock = false;
+        document.addEventListener('wheel', (e) => {
+            if (!this._replayActive) return;
+            if (e.target.closest('#panel-history')) return;
+            e.preventDefault();
+            if (wheelLock) return;
+            wheelLock = true;
+            this._stepReplay(e.deltaY > 0 ? 1 : -1);  // 下滚=下一步，上滚=上一步
+            setTimeout(() => { wheelLock = false; }, 80);
+        }, { passive: false });
+
         // 动作按钮
         Controls.bindEvents(this);
     },
@@ -241,30 +251,51 @@ const App = {
             return;
         }
         this._replayLoading = true;
-        console.log('Replay: fetching replay list...');
+        console.log('Replay: opening, handId =', handId);
+
+        // 切换到「牌局历史」标签页，让用户看到控件和历史列表
+        this._switchToHistoryTab();
+
+        if (handId) {
+            // 直接加载指定手牌
+            this._replayLoading = false;
+            this._loadReplayHand(handId);
+            return;
+        }
+
+        // 未指定 handId → 取最近一手
         fetch('/api/game/replays')
             .then(r => r.json())
             .then(list => {
                 console.log('Replay: got list', list.length, 'hands');
                 if (list.error) { alert(list.error); return; }
-                if (!list.length) { alert('还没有任何可回放的手牌，请先打完一局'); return; }
-
-                const selector = document.getElementById('replay-hand-selector');
-                selector.innerHTML = list.map(h => {
-                    const winnerText = Object.entries(h.winners || {})
-                        .map(([n, amt]) => `${n} +$${amt}`).join(', ');
-                    return `<option value="${h.hand_id}">#${h.hand_id} — ${h.num_actions} 步 — ${winnerText}</option>`;
-                }).join('');
-
-                const targetId = handId || list[list.length - 1].hand_id;
-                selector.value = targetId;
-                this._loadReplayHand(targetId);
+                if (!list.length) {
+                    alert('还没有任何可回放的手牌，请先打完一局');
+                    return;
+                }
+                this._loadReplayHand(list[list.length - 1].hand_id);
             })
             .catch(e => {
                 console.error('Replay: fetch list failed', e);
                 alert('获取回放列表失败: ' + (e.message || e));
             })
             .finally(() => { this._replayLoading = false; });
+    },
+
+    /** 切换到「牌局历史」标签页 */
+    _switchToHistoryTab() {
+        document.querySelectorAll('.tab-btn').forEach(b =>
+            b.classList.toggle('active', b.dataset.tab === 'history'));
+        document.querySelectorAll('.tab-content').forEach(c =>
+            c.classList.toggle('active', c.id === 'panel-history'));
+    },
+
+    /** 高亮当前回放的历史条目 */
+    _highlightHistoryItem(handId) {
+        document.querySelectorAll('.history-item').forEach(el => {
+            el.classList.toggle('history-item-active',
+                parseInt(el.dataset.handId) === handId);
+        });
     },
 
     /** 加载指定手牌的回放数据 */
@@ -288,12 +319,14 @@ const App = {
                 // 隐藏常规 UI，显示回放控件
                 Controls.disableAll();
                 Controls.setStatus('🔄 回放模式 — 手牌 #' + data.hand_id);
-                const overlay = document.getElementById('replay-overlay');
-                if (overlay) {
-                    overlay.classList.add('replay-active');
+                const controls = document.getElementById('replay-controls');
+                if (controls) {
+                    controls.classList.add('active');
                     // 清除残留的错误信息
                     document.getElementById('replay-action-info').textContent = '';
                 }
+                // 高亮对应的历史条目
+                this._highlightHistoryItem(data.hand_id);
                 document.getElementById('hand-counter-toolbar').textContent = `回放 #${data.hand_id}`;
                 document.getElementById('btn-replay-history').textContent = '退出回放';
 
@@ -315,11 +348,13 @@ const App = {
     _exitReplay() {
         this._pauseReplay();
         this._replayActive = false;
-        const overlay = document.getElementById('replay-overlay');
-        if (overlay) {
-            overlay.classList.remove('replay-active');
-            overlay.style.display = 'none';
+        const controls = document.getElementById('replay-controls');
+        if (controls) {
+            controls.classList.remove('active');
         }
+        // 清除历史条目高亮
+        document.querySelectorAll('.history-item').forEach(el =>
+            el.classList.remove('history-item-active'));
         document.getElementById('btn-replay-history').textContent = '🔄 历史回放';
         document.getElementById('hand-counter-toolbar').textContent = this.gameState ? `手牌 #${this.gameState.hand_id}` : '等待开始';
         Controls.setStatus('已退出回放');

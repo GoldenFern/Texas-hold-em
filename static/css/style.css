@@ -584,43 +584,66 @@ body {
     to   { filter: drop-shadow(0 0 16px var(--gold-light)); }
 }
 
-/* ---- 回放覆盖层 ---- */
-.replay-overlay {
+/* ---- 回放控件（嵌入侧栏历史面板） ---- */
+.replay-controls {
     display: none;
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 9999;
-    background: rgba(0,0,0,0.92);
-    border-radius: 10px;
-    padding: 10px 18px;
+    margin-top: 12px;
+    padding: 10px;
+    background: rgba(0,0,0,0.4);
     border: 1px solid var(--gold);
-    min-width: 380px;
-    max-width: 500px;
-    pointer-events: auto;
+    border-radius: 8px;
 }
-.replay-overlay > div {
+.replay-controls.active {
+    display: block;
+}
+.replay-controls-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 8px;
+    margin-bottom: 6px;
 }
-
-/* 回放覆盖层激活状态 */
-.replay-overlay.replay-active {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
+.replay-controls-header #replay-step-counter {
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
 }
 
 /* 回放进度条 */
+#replay-progress-container {
+    width: 100%;
+    margin: 4px 0;
+    cursor: pointer;
+}
 #replay-progress-bar {
     width: 100%;
     height: 6px;
     background: #333;
     border-radius: 3px;
     overflow: hidden;
+}
+#replay-progress-fill {
+    width: 0%;
+    height: 100%;
+    background: linear-gradient(90deg, var(--gold), var(--gold-light));
+    border-radius: 3px;
+    transition: width 0.2s ease;
+}
+
+/* 回放动作信息栏 */
+#replay-action-info {
+    font-size: 12px;
+    color: #fff;
+    text-align: center;
+    min-height: 18px;
+    margin: 6px 0;
+}
+
+/* 回放按钮组 */
+.replay-buttons {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
 }
 
 /* 回放速度选择器 */
@@ -634,6 +657,13 @@ body {
     cursor: pointer;
 }
 #replay-speed:hover { border-color: var(--gold); }
+
+/* 当前回放的历史条目高亮 */
+.history-item.history-item-active {
+    background: rgba(212,168,67,0.18);
+    border-left-color: var(--gold-light);
+    box-shadow: 0 0 8px rgba(212,168,67,0.3);
+}
 
 /* ---- 响应式 ---- */
 @media (max-width: 900px) {

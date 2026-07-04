@@ -13,6 +13,19 @@ const UI = {
                 document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
             });
         });
+
+        // 历史条目点击事件委托 —— 点击进入该局回放
+        const historyList = document.getElementById('history-list');
+        if (historyList) {
+            historyList.addEventListener('click', (e) => {
+                const item = e.target.closest('.history-item');
+                if (!item) return;
+                const handId = parseInt(item.dataset.handId);
+                if (handId && window.App) {
+                    App._openReplay(handId);
+                }
+            });
+        }
     },
 
     /** 更新战局分析面板 */
@@ -158,13 +171,17 @@ const UI = {
                 const list = document.getElementById('history-list');
                 const items = Array.isArray(data) ? data : [];
                 list.innerHTML = items.map(h => `
-                    <div class="history-item">
+                    <div class="history-item" data-hand-id="${h.hand_id}">
                         <strong>Hand #${h.hand_id}</strong><br>
                         底池: $${h.pot_total}<br>
                         赢家: ${Object.entries(h.winners || {}).map(([n, a]) => `${n} (+$${a})`).join(', ')}<br>
                         <small>${(h.actions || []).slice(-3).join('<br>')}</small>
                     </div>
                 `).join('');
+                // 重新渲染后恢复当前回放条目的高亮
+                if (window.App && App._replayActive && App._replayData) {
+                    App._highlightHistoryItem(App._replayData.hand_id);
+                }
             })
             .catch(() => {});
     },
