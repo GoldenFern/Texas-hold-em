@@ -1,19 +1,9 @@
-"""手牌评估器 —— 从 7 张牌中选出最佳 5 张牌型。
+"""手牌评估器 —— 基于 Treys (TwoPlusTwo 查表算法) 的高性能评估。
 
-核心算法：生成所有 C(7,5)=21 种 5 牌组合，逐一评估，返回最佳。
+使用业界成熟的 Treys 库替代原来自行实现的枚举组合算法。
+Treys 内部使用 Cactus Kev 改进版的预计算查找表，O(1) 完成 5 张牌评估。
 
-评分系统：
-    每手牌被编码为一个元组 (牌型等级, *踢脚序列)，元组比较即手牌比较。
-    - 高牌:     (0, k1, k2, k3, k4, k5)
-    - 一对:     (1, pair_rank, k1, k2, k3)
-    - 两对:     (2, high_pair, low_pair, kicker)
-    - 三条:     (3, trips_rank, k1, k2)
-    - 顺子:     (4, top_card)
-    - 同花:     (5, k1, k2, k3, k4, k5)
-    - 葫芦:     (6, trips_rank, pair_rank)
-    - 四条:     (7, quad_rank, kicker)
-    - 同花顺:   (8, top_card)
-    - 皇家同花顺: (9,)
+公开 API 保持不变，下游代码无需任何改动。
 """
 
 from __future__ import annotations
@@ -22,14 +12,43 @@ import itertools
 from collections import Counter
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
+from treys import Card as TreysCard
+from treys import Evaluator
+
 from src.engine.card import Card, Cards
 from src.utils.constants import HandRank, Rank
 
 
+# ================================================================
+# Treys 初始化（模块级单例）
+# ================================================================
+
+_treys = Evaluator()
+
+# Treys rank_class → 我们的 HandRank 枚举
+# Treys rank_class 是 0-indexed，0=StraightFlush, ..., 9=HighCard
+_TREYS_RANK_MAP: Dict[int, HandRank] = {
+    0: HandRank.STRAIGHT_FLUSH,  # 含皇家同花顺（额外检测区分）
+    1: HandRank.STRAIGHT_FLUSH,
+    2: HandRank.FOUR_OF_A_KIND,
+    3: HandRank.FULL_HOUSE,
+    4: HandRank.FLUSH,
+    5: HandRank.STRAIGHT,
+    6: HandRank.THREE_OF_A_KIND,
+    7: HandRank.TWO_PAIR,
+    8: HandRank.ONE_PAIR,
+    9: HandRank.HIGH_CARD,
+}
+
+
+# ================================================================
+# HandScore 类型 & HandResult 类（公开 API 不变）
+# ================================================================
+
 # 手牌分数类型：可比较的元组
 HandScore = Tuple[int, ...]
 
-# 评估结果
+
 class HandResult:
     """一手牌的完整评估结果。
 
@@ -83,54 +102,114 @@ class HandResult:
         return self.score >= other.score
 
 
+# ================================================================
+# HandEvaluator
+# ================================================================
+
 class HandEvaluator:
     """手牌评估器。
 
-    静态方法集，用于评估 5 或 7 张牌中的最佳手牌。
+    内部使用 Treys（TwoPlusTwo 查表算法）进行牌型识别，
+    输出结果格式与之前完全相同，下游无需改动。
     """
 
     # Ace-low 顺子 (A-2-3-4-5) 的特殊映射
     _ACE_LOW_STRAIGHT_RANKS = frozenset({14, 2, 3, 4, 5})
 
+    # ---- 转换 ----
+
+    @staticmethod
+    def _to_treys(card: Card) -> int:
+        """将项目 Card 转为 Treys 内部整数表示。"""
+        return TreysCard.new(card.short_str)
+
+    # ---- 公开 API ----
+
     @staticmethod
     def evaluate(cards: Sequence[Card]) -> HandResult:
         """从序列中的所有牌中选出最佳 5 张牌型。
 
-        支持 5–7 张牌作为输入。对 7 张牌，枚举所有 21 种 5 牌组合。
+        支持 5–7 张牌作为输入。使用 Treys 查表算法快速评估。
         """
         n = len(cards)
         if n < 5:
             raise ValueError(f"至少需要 5 张牌，目前仅有 {n} 张")
         if n == 5:
             return HandEvaluator._evaluate_five(list(cards))
-        # 6 或 7 张牌：取所有 5 牌组合，找最佳
-        best: Optional[HandResult] = None
-        for combo in itertools.combinations(cards, 5):
-            result = HandEvaluator._evaluate_five(list(combo))
-            if best is None or result > best:
-                best = result
-        assert best is not None
-        return best
+
+        # 6 或 7 张牌：用 Treys 分数枚举所有 C(n,5) 组合找最佳
+        treys_cards = [HandEvaluator._to_treys(c) for c in cards]
+        best_score = 7463  # Treys 分数 1-7462，7463 为哨兵值
+        best_combo: List[Card] = []
+
+        for indices in itertools.combinations(range(n), 5):
+            combo_treys = [treys_cards[i] for i in indices]
+            score = _treys.evaluate(combo_treys, [])
+            if score < best_score:
+                best_score = score
+                best_combo = [cards[i] for i in indices]  # type: ignore[index]
+
+        return HandEvaluator._evaluate_five(best_combo)
+
+    @staticmethod
+    def compare(cards_a: Sequence[Card], cards_b: Sequence[Card]) -> int:
+        """比较两手牌。
+
+        Returns:
+            1: A 胜, -1: B 胜, 0: 平局。
+        """
+        result_a = HandEvaluator.evaluate(cards_a)
+        result_b = HandEvaluator.evaluate(cards_b)
+        if result_a > result_b:
+            return 1
+        if result_a < result_b:
+            return -1
+        return 0
+
+    @staticmethod
+    def compare_results(
+        result_a: HandResult, result_b: HandResult
+    ) -> int:
+        """比较两个已评估的手牌结果。
+
+        Returns:
+            1: A 胜, -1: B 胜, 0: 平局。
+        """
+        if result_a > result_b:
+            return 1
+        if result_a < result_b:
+            return -1
+        return 0
+
+    # ---- 内部评估 ----
 
     @staticmethod
     def _evaluate_five(cards: List[Card]) -> HandResult:
-        """评估恰好 5 张牌的手牌。"""
+        """评估恰好 5 张牌的手牌。
+
+        使用 Treys 做牌型分类，自行提取踢脚构造 score 元组。
+        """
+        treys_cards = [HandEvaluator._to_treys(c) for c in cards]
+        treys_score = _treys.evaluate(treys_cards, [])
+        rank_class = _treys.get_rank_class(treys_score)
+
         ranks = sorted((c.rank.value for c in cards), reverse=True)
-        suits = [c.suit for c in cards]
         rank_counts = Counter(ranks)
         most_common = rank_counts.most_common()
 
-        is_flush = len(set(suits)) == 1
+        is_flush = len(set(c.suit for c in cards)) == 1
         is_straight, straight_high = HandEvaluator._check_straight(ranks)
 
-        # 同花顺 / 皇家同花顺
-        if is_flush and is_straight:
-            if straight_high == 14:  # A-high straight flush = Royal
+        # 同花顺 / 皇家同花顺（Treys rank_class 0 或 1）
+        if rank_class <= 1:
+            if is_straight and straight_high == 14:  # A-high = 皇家
                 return HandResult(HandRank.ROYAL_FLUSH, (9,), cards)
-            return HandResult(HandRank.STRAIGHT_FLUSH, (8, straight_high), cards)
+            return HandResult(
+                HandRank.STRAIGHT_FLUSH, (8, straight_high), cards
+            )
 
         # 四条
-        if most_common[0][1] == 4:
+        if rank_class == 2:
             quad_rank = most_common[0][0]
             kicker = most_common[1][0]
             return HandResult(
@@ -138,7 +217,7 @@ class HandEvaluator:
             )
 
         # 葫芦
-        if most_common[0][1] == 3 and most_common[1][1] == 2:
+        if rank_class == 3:
             trips_rank = most_common[0][0]
             pair_rank = most_common[1][0]
             return HandResult(
@@ -146,19 +225,19 @@ class HandEvaluator:
             )
 
         # 同花（非顺）
-        if is_flush:
+        if rank_class == 4:
             return HandResult(
                 HandRank.FLUSH, (5, *ranks), cards
             )
 
         # 顺子（非同花）
-        if is_straight:
+        if rank_class == 5:
             return HandResult(
                 HandRank.STRAIGHT, (4, straight_high), cards
             )
 
         # 三条
-        if most_common[0][1] == 3:
+        if rank_class == 6:
             trips_rank = most_common[0][0]
             kickers = sorted(
                 [r for r in ranks if r != trips_rank], reverse=True
@@ -170,7 +249,7 @@ class HandEvaluator:
             )
 
         # 两对
-        if most_common[0][1] == 2 and most_common[1][1] == 2:
+        if rank_class == 7:
             high_pair = max(most_common[0][0], most_common[1][0])
             low_pair = min(most_common[0][0], most_common[1][0])
             kicker = most_common[2][0]
@@ -181,7 +260,7 @@ class HandEvaluator:
             )
 
         # 一对
-        if most_common[0][1] == 2:
+        if rank_class == 8:
             pair_rank = most_common[0][0]
             kickers = sorted(
                 [r for r in ranks if r != pair_rank], reverse=True
@@ -214,33 +293,3 @@ class HandEvaluator:
         if unique == [14, 5, 4, 3, 2]:
             return True, 5
         return False, 0
-
-    @staticmethod
-    def compare(cards_a: Sequence[Card], cards_b: Sequence[Card]) -> int:
-        """比较两手牌。
-
-        Returns:
-            1: A 胜, -1: B 胜, 0: 平局。
-        """
-        result_a = HandEvaluator.evaluate(cards_a)
-        result_b = HandEvaluator.evaluate(cards_b)
-        if result_a > result_b:
-            return 1
-        if result_a < result_b:
-            return -1
-        return 0
-
-    @staticmethod
-    def compare_results(
-        result_a: HandResult, result_b: HandResult
-    ) -> int:
-        """比较两个已评估的手牌结果。
-
-        Returns:
-            1: A 胜, -1: B 胜, 0: 平局。
-        """
-        if result_a > result_b:
-            return 1
-        if result_a < result_b:
-            return -1
-        return 0
