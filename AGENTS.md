@@ -1,3 +1,8 @@
+---
+description: 
+alwaysApply: true
+---
+
 # CLAUDE.md — Texas Hold'em Poker
 
 ## 项目概述
@@ -66,3 +71,17 @@ pip install python-dotenv        # .env 加载
 ```
 
 环境变量：`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `THP_LLM_*`（项目专用前缀）。
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues（`gh` CLI）；外部 PR 不作为 triage 入口。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+五个标准 triage 标签，名称与默认一致。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文布局：根目录 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。

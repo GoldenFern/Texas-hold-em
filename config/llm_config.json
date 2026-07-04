@@ -8,12 +8,14 @@
     {
       "provider": "deepseek",
       "model": "deepseek-v4-flash",
-      "timeout_seconds": 10.0
+      "timeout_seconds": 10.0,
+      "base_url": "https://api.deepseek.com"
     },
     {
       "provider": "qwen",
       "model": "qwen-3.7-plus",
-      "timeout_seconds": 10.0
+      "timeout_seconds": 10.0,
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
     }
   ],
   "strategy": {
@@ -26,9 +28,10 @@
     "prompt_caching": true
   },
   "commentary": {
-    "enabled": false
+    "enabled": true
   },
   "advisor": {
-    "enabled": false
-  }
+    "enabled": true
+  },
+  "base_url": "https://api.deepseek.com"
 }
