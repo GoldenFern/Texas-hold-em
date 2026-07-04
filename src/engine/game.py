@@ -586,6 +586,12 @@ class GameState:
             if len(active) <= 1 and len(active) + len(all_in_players) <= 1:
                 self._handle_last_player_wins()
                 return
+            # 所有剩余玩家都全下：快速发完公共牌直接到摊牌
+            if len(active) == 0 and len(all_in_players) > 0:
+                while self.phase != GamePhase.RIVER:
+                    self.advance_phase()
+                self._showdown()
+                return
             self.advance_phase()
 
     def _handle_last_player_wins(self) -> None:
@@ -646,9 +652,16 @@ class GameState:
             if p.status == PlayerStatus.ACTIVE
         ]
 
-        # 0 或 1 个活跃玩家 = 轮完成
-        if len(active_players) <= 1:
+        # 没有活跃玩家 = 轮完成
+        if len(active_players) == 0:
             return True
+
+        # 只有 1 个活跃玩家：需要他已经行动过且下注额平齐
+        # （防止有人在后面加注后，他还没回应就被判定为轮完成）
+        if len(active_players) == 1:
+            p = active_players[0]
+            acted_this_round = {a.player_name for a in self.actions_this_round}
+            return p.current_bet == self.current_bet and p.name in acted_this_round
 
         # 所有活跃玩家的 current_bet 必须等于当前下注额
         for p in active_players:
@@ -656,7 +669,6 @@ class GameState:
                 return False
 
         # 每个活跃玩家都必须在本轮行动过
-        # （除非他们是全下后唯一的活跃玩家）
         acted_this_round = {a.player_name for a in self.actions_this_round}
         for p in active_players:
             if p.name not in acted_this_round:
