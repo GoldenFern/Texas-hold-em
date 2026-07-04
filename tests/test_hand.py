@@ -387,3 +387,116 @@ class TestFoldedPlayerStronger:
         hands.sort(key=lambda x: x[1], reverse=True)  # score 降序 = 强→弱
         assert hands[0][0] == "folded", "弃牌玩家的同花应排第一"
         assert hands[1][0] == "winner", "赢家的一对 A 应排第二"
+
+
+# ============================================================
+# 边界场景：牌型比拼与胜负判定
+# ============================================================
+
+class TestWheelStraightFromSeven:
+    """A-2-3-4-5 顺子从 7 张牌中正确提取。"""
+
+    def test_wheel_with_broadway_board(self) -> None:
+        """玩家 A♠ 2♥，公共牌 3♦ 4♣ 5♠ K♦ Q♣：最佳 5 张为 A-2-3-4-5 顺子。"""
+        hole = cards("As 2h")
+        board = cards("3d 4c 5s Kd Qc")
+        result = HandEvaluator.evaluate(hole + board)
+        assert result.hand_rank == HandRank.STRAIGHT
+        # wheel 顺子顶牌应为 5
+        assert result.score[1] == 5
+
+    def test_wheel_is_lowest_straight(self) -> None:
+        """Wheel（5-high）应输给 6-high 顺子。"""
+        wheel = eval_hand("Ah 2s 3d 4h 5c 9d Ks")
+        six_high = eval_hand("6h 5s 4d 3h 2c 9d Ks")
+        assert wheel.hand_rank == HandRank.STRAIGHT
+        assert six_high.hand_rank == HandRank.STRAIGHT
+        assert six_high > wheel
+
+
+class TestBestFiveFromLongStraightFlush:
+    """长同花顺（7 张连续同花色）中正确选出最大 5 张。"""
+
+    def test_royal_over_queen_high_sf(self) -> None:
+        """玩家 A♥ K♥，公共牌 Q♥ J♥ T♥ 9♥ 8♥：应选皇家同花顺 A-K-Q-J-T。"""
+        hole = cards("Ah Kh")
+        board = cards("Qh Jh Th 9h 8h")
+        result = HandEvaluator.evaluate(hole + board)
+        assert result.hand_rank == HandRank.ROYAL_FLUSH
+
+    def test_long_sf_with_hole_not_contributing(self) -> None:
+        """玩家 2♥ 3♥，同样公共牌：最佳 5 张为 Q-high 同花顺 Q-J-T-9-8。"""
+        hole = cards("2h 3h")
+        board = cards("Qh Jh Th 9h 8h")
+        result = HandEvaluator.evaluate(hole + board)
+        assert result.hand_rank == HandRank.STRAIGHT_FLUSH
+        assert result.score[1] == 12  # Q-high
+
+    def test_seven_card_sf_comparison(self) -> None:
+        """皇家同花顺 > Q-high 同花顺（7 张牌输入）。"""
+        royal_hole = cards("Ah Kh")
+        q_hole = cards("2h 3h")
+        board = cards("Qh Jh Th 9h 8h")
+        royal = HandEvaluator.evaluate(royal_hole + board)
+        q_high = HandEvaluator.evaluate(q_hole + board)
+        assert royal.hand_rank == HandRank.ROYAL_FLUSH
+        assert q_high.hand_rank == HandRank.STRAIGHT_FLUSH
+        assert royal > q_high
+
+
+class TestDoubleTripsFullHouse:
+    """7 张牌中含两组三条时，选点数更高的一组作为葫芦主牌。"""
+
+    def test_double_trips_selects_higher_trips(self) -> None:
+        """玩家 Q♠ Q♥，公共牌 8♦ 8♣ 8♠ Q♣ 2♦：葫芦为 Q-Q-Q-8-8。"""
+        hole = cards("Qs Qh")
+        board = cards("8d 8c 8s Qc 2d")
+        result = HandEvaluator.evaluate(hole + board)
+        assert result.hand_rank == HandRank.FULL_HOUSE
+        # score = (6, trips_rank, pair_rank) → (6, 12, 8) 即 Q 葫芦
+        assert result.score == (6, 12, 8)
+
+    def test_double_trips_lower_hole_trips(self) -> None:
+        """玩家 8♥ 2♣，公共牌 Q♦ Q♣ Q♠ 8♦ 2♠：葫芦为 Q-Q-Q-8-8。"""
+        hole = cards("8h 2c")
+        board = cards("Qd Qc Qs 8d 2s")
+        result = HandEvaluator.evaluate(hole + board)
+        assert result.hand_rank == HandRank.FULL_HOUSE
+        assert result.score == (6, 12, 8)  # Q 葫芦，不是 8 葫芦
+
+
+class TestQuadsKickerEdgeCases:
+    """四条踢脚牌比较，含公共牌提供踢脚的平局场景。"""
+
+    def test_quads_ace_kicker_beats_king_kicker(self) -> None:
+        """公共牌 J♠ J♥ J♦ J♣ 9♥，A♦ 2♣ vs K♣ Q♥：A 获胜。"""
+        board = cards("Js Jh Jd Jc 9h")
+        hole_a = cards("Ad 2c")
+        hole_b = cards("Kc Qh")
+        hand_a = HandEvaluator.evaluate(hole_a + board)
+        hand_b = HandEvaluator.evaluate(hole_b + board)
+        assert hand_a.hand_rank == HandRank.FOUR_OF_A_KIND
+        assert hand_b.hand_rank == HandRank.FOUR_OF_A_KIND
+        assert hand_a > hand_b
+
+    def test_quads_board_kicker_tie(self) -> None:
+        """公共牌 J♠ J♥ J♦ J♣ A♥，双方底牌不同：均组成 J-J-J-J-A，平局。"""
+        board = cards("Js Jh Jd Jc Ah")
+        hole_a = cards("Kc 2c")
+        hole_b = cards("Qc 3c")
+        hand_a = HandEvaluator.evaluate(hole_a + board)
+        hand_b = HandEvaluator.evaluate(hole_b + board)
+        assert hand_a.hand_rank == HandRank.FOUR_OF_A_KIND
+        assert hand_b.hand_rank == HandRank.FOUR_OF_A_KIND
+        # 两边的踢脚都是公共牌的 A（rank=14）
+        assert hand_a.score[2] == 14
+        assert hand_b.score[2] == 14
+        assert hand_a.score == hand_b.score
+        assert HandEvaluator.compare(hole_a + board, hole_b + board) == 0
+
+    def test_quads_different_kickers_compare_direct(self) -> None:
+        """使用 HandEvaluator.compare() 直接比较四条踢脚差异。"""
+        board = cards("Js Jh Jd Jc 9h")
+        hole_a = cards("Ad 2c")
+        hole_b = cards("Kc Qh")
+        assert HandEvaluator.compare(hole_a + board, hole_b + board) == 1

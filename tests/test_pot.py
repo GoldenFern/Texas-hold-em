@@ -139,3 +139,88 @@ class TestSidePotCalculation:
 
         total_pot = pot.main_pot + sum(sp.amount for sp in pot.side_pots)
         assert total_pot == 85  # 10+25+50
+
+
+# ============================================================
+# 边界场景：非等额多路 All-In
+# ============================================================
+
+class TestMultiLevelAllIn:
+    """四人多层级全下，主池+边池划分。"""
+
+    def test_four_player_multi_level(self) -> None:
+        """A 100, B 200, C 500, D 500：主池 400 + 边池1 300 + 边池2 600 = 1300。"""
+        pot = Pot()
+        p_a = make_player("A", 100, 0)
+        p_b = make_player("B", 200, 1)
+        p_c = make_player("C", 500, 2)
+        p_d = make_player("D", 500, 3)
+
+        p_a.total_bet = 100
+        p_b.total_bet = 200
+        p_c.total_bet = 500
+        p_d.total_bet = 500
+
+        pot.collect_bets([p_a, p_b, p_c, p_d])
+
+        # 主池: 4 × 100 = 400
+        assert pot.main_pot == 400
+        # 应有 2 个边池
+        assert len(pot.side_pots) == 2
+        # 边池1: 3 × (200-100) = 300
+        assert pot.side_pots[0].amount == 300
+        # 边池2: 2 × (500-200) = 600
+        assert pot.side_pots[1].amount == 600
+        # 总额
+        total = pot.main_pot + sum(sp.amount for sp in pot.side_pots)
+        assert total == 1300
+
+    def test_four_player_eligibility(self) -> None:
+        """验证各玩家在各池的资格。"""
+        pot = Pot()
+        p_a = make_player("A", 100, 0)
+        p_b = make_player("B", 200, 1)
+        p_c = make_player("C", 500, 2)
+        p_d = make_player("D", 500, 3)
+
+        p_a.total_bet = 100
+        p_b.total_bet = 200
+        p_c.total_bet = 500
+        p_d.total_bet = 500
+
+        pot.collect_bets([p_a, p_b, p_c, p_d])
+
+        # 边池1: B、C、D 有资格，A 无资格
+        assert "A" not in pot.side_pots[0].eligible_players
+        assert "B" in pot.side_pots[0].eligible_players
+        assert "C" in pot.side_pots[0].eligible_players
+        assert "D" in pot.side_pots[0].eligible_players
+
+        # 边池2: 仅 C、D 有资格
+        assert "A" not in pot.side_pots[1].eligible_players
+        assert "B" not in pot.side_pots[1].eligible_players
+        assert "C" in pot.side_pots[1].eligible_players
+        assert "D" in pot.side_pots[1].eligible_players
+
+    def test_four_player_with_folded(self) -> None:
+        """D 弃牌后，边池2 D 不再有资格。"""
+        pot = Pot()
+        p_a = make_player("A", 100, 0)
+        p_b = make_player("B", 200, 1)
+        p_c = make_player("C", 500, 2)
+        p_d = make_player("D", 500, 3)
+
+        p_a.total_bet = 100
+        p_b.total_bet = 200
+        p_c.total_bet = 500
+        p_d.total_bet = 500
+        p_d.fold()
+
+        pot.collect_bets([p_a, p_b, p_c, p_d])
+
+        # D 已弃牌，边池2 只剩 C
+        assert "D" not in pot.side_pots[1].eligible_players
+        # 主池和边池1 的金额不变
+        assert pot.main_pot == 400
+        assert pot.side_pots[0].amount == 300
+        assert pot.side_pots[1].amount == 600

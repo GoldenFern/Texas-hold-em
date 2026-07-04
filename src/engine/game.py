@@ -98,6 +98,7 @@ class GameState:
         self.min_raise: int = big_blind  # 最小加注额
         self.actions_this_round: List[Action] = []
         self.all_actions: List[Action] = []
+        self._last_raise_was_incomplete: bool = False  # 不完整加注标记
         self._step_snapshots: List[dict] = []  # 回放用：每步的中间状态
         self.hand_history: List[HandHistory] = []
         self.winners: Dict[str, int] = {}
@@ -135,6 +136,7 @@ class GameState:
         self.min_raise = self.big_blind
         self.actions_this_round = []
         self.all_actions = []
+        self._last_raise_was_incomplete = False
         self._step_snapshots = []  # 回放快照重置
         self.winners = {}
         self.winning_hands = {}
@@ -202,9 +204,15 @@ class GameState:
                 self.pot.add_bet(p, actual)
 
     def _post_blinds(self) -> None:
-        """收取小盲和大盲。"""
-        sb_player = self._get_player_after(self.dealer_index)
-        bb_player = self._get_player_after(sb_player.seat)
+        """收取小盲和大盲。单挑时庄家（Button）同时也是小盲。"""
+        active_count = sum(1 for p in self.players if p.chips > 0)
+        if active_count == 2:
+            # 单挑规则：庄家同时是小盲
+            sb_player = self.players[self.dealer_index]
+            bb_player = self._get_player_after(self.dealer_index)
+        else:
+            sb_player = self._get_player_after(self.dealer_index)
+            bb_player = self._get_player_after(sb_player.seat)
 
         # 小盲
         sb_player.is_small_blind = True
@@ -226,6 +234,10 @@ class GameState:
 
     def _get_first_to_act(self) -> int:
         """确定翻牌前第一个行动的玩家（UTG）。"""
+        active_count = sum(1 for p in self.players if p.chips > 0)
+        if active_count == 2:
+            # 单挑：庄家（同时也是小盲）先行动
+            return self.dealer_index
         # 翻牌前：大盲注之后第一位
         bb_idx = self._get_player_after(
             self._get_player_after(self.dealer_index).seat
@@ -246,6 +258,7 @@ class GameState:
         self.current_bet = 0
         self.last_raise = 0
         self.actions_this_round = []
+        self._last_raise_was_incomplete = False
 
         if self.phase == GamePhase.PRE_FLOP:
             self._deal_community(3)  # Flop
@@ -454,7 +467,15 @@ class GameState:
                 legal.append(ActionType.RAISE)
         else:
             legal.append(ActionType.CALL)
-            legal.append(ActionType.RAISE)
+            # 不完整加注规则：如果玩家本轮已行动过且最后加注不完整，无权再加注
+            if self._last_raise_was_incomplete:
+                has_acted = any(
+                    a.player_name == player.name for a in self.actions_this_round
+                )
+                if not has_acted:
+                    legal.append(ActionType.RAISE)
+            else:
+                legal.append(ActionType.RAISE)
 
         # 全下始终可选
         if ActionType.RAISE in legal and player.chips > to_call:
@@ -538,7 +559,14 @@ class GameState:
                 player.status = PlayerStatus.ALL_IN
                 action.is_all_in = True
 
-            self.last_raise = amount - self.current_bet
+            raise_amount = amount - self.current_bet
+            # 不完整加注判断：加注增量 < 当前最小加注额 且 当前已有下注
+            if self.current_bet > 0 and raise_amount < self.min_raise:
+                self._last_raise_was_incomplete = True
+            else:
+                self._last_raise_was_incomplete = False
+
+            self.last_raise = raise_amount
             self.min_raise = max(self.last_raise, self.big_blind)
             self.current_bet = amount
             self._emit("bet_raised", player.name, amount)

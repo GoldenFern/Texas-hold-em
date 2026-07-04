@@ -4,8 +4,14 @@ import pytest
 
 from src.engine.card import Card
 from src.engine.game import Action, ActionType, GameState
+from src.engine.hand import HandEvaluator
 from src.engine.player import Player
 from src.utils.constants import BettingStructure, GamePhase, PlayerStatus
+
+
+def cards(s: str) -> list[Card]:
+    """快捷构造牌列表。"""
+    return Card.from_str_multi(s)
 
 
 def make_players(names: list[str], chips: int = 1000) -> list[Player]:
@@ -339,3 +345,385 @@ class TestGameFlow:
         # result 应为皇家同花顺
         from src.utils.constants import HandRank
         assert results["A"].hand_rank == HandRank.ROYAL_FLUSH
+
+
+# ============================================================
+# 边界场景：下注流程与行动权判定
+# ============================================================
+
+class TestBigBlindOption:
+    """翻牌前大盲位的过牌/加注选择权（Option）。"""
+
+    def test_bb_can_check_when_all_call(self) -> None:
+        """3 人桌，UTG call，SB call：BB 的合法动作包含 CHECK 和 RAISE。"""
+        players = make_players(["A", "B", "C"])
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+        # 盲注/庄位已确定
+
+        # 收集玩家角色
+        sb = next(p for p in players if p.is_small_blind)
+        bb = next(p for p in players if p.is_big_blind)
+
+        # UTG call
+        utg = game.players[game.current_player_index]
+        game.apply_action(Action(utg.name, ActionType.CALL))
+
+        # SB call
+        next_p = game.players[game.current_player_index]
+        game.apply_action(Action(next_p.name, ActionType.CALL))
+
+        # 现在应该是 BB 行动
+        assert game.current_player_index == bb.seat
+        legal = game.get_legal_actions(bb)
+        assert ActionType.CHECK in legal
+        assert ActionType.RAISE in legal
+
+    def test_bb_check_ends_preflop(self) -> None:
+        """BB check 后，翻牌前下注圈结束，进入 FLOP。"""
+        players = make_players(["A", "B", "C"])
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+
+        bb = next(p for p in players if p.is_big_blind)
+
+        # UTG call
+        game.apply_action(Action(game.players[game.current_player_index].name, ActionType.CALL))
+        # SB call
+        game.apply_action(Action(game.players[game.current_player_index].name, ActionType.CALL))
+        # BB check
+        assert game.current_player_index == bb.seat
+        game.apply_action(Action(bb.name, ActionType.CHECK))
+
+        # 应进入 FLOP
+        assert game.phase == GamePhase.FLOP
+        assert len(game.community_cards) == 3
+
+    def test_bb_raise_reopens_betting(self) -> None:
+        """BB raise 后，下注圈重新激活，其他玩家需再次决策。"""
+        players = make_players(["A", "B", "C"])
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+
+        bb = next(p for p in players if p.is_big_blind)
+
+        # UTG call
+        game.apply_action(Action(game.players[game.current_player_index].name, ActionType.CALL))
+        # SB call
+        game.apply_action(Action(game.players[game.current_player_index].name, ActionType.CALL))
+        # BB raise to 30
+        assert game.current_player_index == bb.seat
+        game.apply_action(Action(bb.name, ActionType.RAISE, amount=30))
+
+        assert game.current_bet == 30
+        # UTG 现在必须再次决策（面临 20 的加注）
+        utg = game.players[game.current_player_index]
+        legal = game.get_legal_actions(utg)
+        assert ActionType.CALL in legal
+        assert ActionType.RAISE in legal
+        assert ActionType.FOLD in legal
+
+
+class TestIncompleteRaise:
+    """不完整加注对重新加注权的限制。"""
+
+    def test_incomplete_raise_no_reopen(self) -> None:
+        """A bet 20, B raise to 100, C all-in 130 (+30 不完整加注)：B 无权再加注。"""
+        players = make_players(["A", "B", "C", "D"])
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+
+        # 目标：让 D fold, 然后 A bet 20, B raise 100, C all-in 130, A call, 再到 B
+        # 先到 flop 后更方便控制
+        # 所有人 check/call 到 flop
+        for _ in range(10):
+            if game.phase >= GamePhase.FLOP:
+                break
+            cp = game.players[game.current_player_index]
+            legal = game.get_legal_actions(cp)
+            if ActionType.CHECK in legal:
+                game.apply_action(Action(cp.name, ActionType.CHECK))
+            elif ActionType.CALL in legal:
+                game.apply_action(Action(cp.name, ActionType.CALL))
+            else:
+                game.apply_action(Action(cp.name, ActionType.FOLD))
+
+        assert game.phase == GamePhase.FLOP
+
+        # Flop: A bet 20
+        cp = game.players[game.current_player_index]
+        game.apply_action(Action(cp.name, ActionType.BET, amount=20))
+        assert game.current_bet == 20
+
+        # B raise to 100
+        b = game.players[game.current_player_index]
+        game.apply_action(Action(b.name, ActionType.RAISE, amount=100))
+        assert game.current_bet == 100
+
+        # C all-in 130 (short stacked)
+        c = game.players[game.current_player_index]
+        c.chips = 130  # 确保 C 只有 130 筹码
+        game.apply_action(Action(c.name, ActionType.RAISE, amount=c.chips + c.current_bet))
+        assert c.is_all_in
+
+        # D fold
+        d = game.players[game.current_player_index]
+        game.apply_action(Action(d.name, ActionType.FOLD))
+
+        # A call
+        a = game.players[game.current_player_index]
+        game.apply_action(Action(a.name, ActionType.CALL))
+
+        # 现在回到 B：不完整加注不应唤醒 B 的加注权
+        b_current = game.players[game.current_player_index]
+        legal_b = game.get_legal_actions(b_current)
+        assert ActionType.RAISE not in legal_b, "B 不应有权再加注（不完整加注未唤醒）"
+        assert ActionType.CALL in legal_b
+        assert ActionType.FOLD in legal_b
+
+    def test_complete_all_in_reopens(self) -> None:
+        """A bet 20, B call 20, C all-in for 120 (>= min_raise of 80)：唤醒 A 的加注权。"""
+        players = make_players(["A", "B", "C", "D"])
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+
+        # 到 flop
+        for _ in range(10):
+            if game.phase >= GamePhase.FLOP:
+                break
+            cp = game.players[game.current_player_index]
+            legal = game.get_legal_actions(cp)
+            if ActionType.CHECK in legal:
+                game.apply_action(Action(cp.name, ActionType.CHECK))
+            elif ActionType.CALL in legal:
+                game.apply_action(Action(cp.name, ActionType.CALL))
+            else:
+                game.apply_action(Action(cp.name, ActionType.FOLD))
+
+        # Flop: A bet 20
+        cp = game.players[game.current_player_index]
+        game.apply_action(Action(cp.name, ActionType.BET, amount=20))
+
+        # B call
+        b = game.players[game.current_player_index]
+        game.apply_action(Action(b.name, ActionType.CALL))
+
+        # C all-in 120 (raise by 100 >= big_blind=10, complete raise)
+        c = game.players[game.current_player_index]
+        c.chips = 120
+        game.apply_action(Action(c.name, ActionType.RAISE, amount=c.chips + c.current_bet))
+
+        # D fold
+        d = game.players[game.current_player_index]
+        game.apply_action(Action(d.name, ActionType.FOLD))
+
+        # B call
+        b2 = game.players[game.current_player_index]
+        game.apply_action(Action(b2.name, ActionType.CALL))
+
+        # 回到 A：完整加注唤醒了 A 的加注权
+        a = game.players[game.current_player_index]
+        legal_a = game.get_legal_actions(a)
+        assert ActionType.RAISE in legal_a, "A 应有加注权（完整加注重新激活）"
+
+
+class TestHeadsUpActionOrder:
+    """单挑（Heads-Up）模式下的行动顺序。"""
+
+    def test_heads_up_preflop_btn_is_sb(self) -> None:
+        """单挑中，庄家（Button）同时也是小盲。"""
+        players = make_players(["A", "B"])
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+
+        dealer = game.players[game.dealer_index]
+        assert dealer.is_small_blind, "单挑中 BTN 同时也是 SB"
+
+    def test_heads_up_preflop_btn_acts_first(self) -> None:
+        """单挑翻牌前，BTN/SB 应第一个行动。"""
+        players = make_players(["A", "B"])
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+
+        dealer = game.players[game.dealer_index]
+        # 翻牌前第一个行动的是 BTN（也是 SB）
+        first_to_act = game.players[game.current_player_index]
+        assert first_to_act.seat == dealer.seat, (
+            f"单挑翻牌前 BTN(seat={dealer.seat}) 应第一个行动，"
+            f"但当前是 seat={first_to_act.seat}"
+        )
+
+    def test_heads_up_postflop_btn_acts_last(self) -> None:
+        """单挑翻牌后，庄家应在最后行动。"""
+        players = make_players(["A", "B"])
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+
+        dealer = game.players[game.dealer_index]
+        bb = next(p for p in players if p.is_big_blind)
+
+        # 翻牌前：BTN calls, BB checks → 进入 flop
+        btn_round = game.players[game.current_player_index]
+        game.apply_action(Action(btn_round.name, ActionType.CALL))
+        # BB checks
+        bb_round = game.players[game.current_player_index]
+        game.apply_action(Action(bb_round.name, ActionType.CHECK))
+
+        # 翻牌后，非庄家应第一个行动
+        assert game.phase == GamePhase.FLOP
+        first_post = game.players[game.current_player_index]
+        assert first_post.seat != dealer.seat, "翻牌后 BTN 不应第一个行动"
+        assert first_post.seat == bb.seat, "翻牌后 BB（非庄家）应第一个行动"
+
+
+# ============================================================
+# 边界场景：筹码池分割
+# ============================================================
+
+class TestDeadMoneySidePotResolution:
+    """弃牌玩家筹码（死钱）在边池中的分配归属。"""
+
+    def test_fold_leaves_money_in_contested_pots(self) -> None:
+        """D 弃牌后，D 在主池和边池1的钱保持原状，继续参与比牌。"""
+        players = make_players(["A", "B", "C", "D"])
+        # A=100, B=200, C=500, D=500
+        players[0].chips = 100
+        players[1].chips = 200
+        players[2].chips = 500
+        players[3].chips = 500
+        game = GameState(players, small_blind=5, big_blind=10)
+        game.start_new_hand()
+
+        # 让 A 全下 100, B 全下 200, C/D 各跟 500，然后 C 下注 D 弃牌
+        # 先到 flop
+        for _ in range(15):
+            if game.phase >= GamePhase.FLOP:
+                break
+            cp = game.players[game.current_player_index]
+            if cp.status != PlayerStatus.ACTIVE:
+                game.current_player_index = game._get_next_active_player(game.current_player_index)
+                continue
+            legal = game.get_legal_actions(cp)
+            if cp.name == "A" and game.phase == GamePhase.PRE_FLOP:
+                game.apply_action(Action("A", ActionType.RAISE, amount=100))
+            elif cp.name == "B" and game.phase == GamePhase.PRE_FLOP:
+                game.apply_action(Action("B", ActionType.RAISE, amount=200))
+            elif cp.name == "C" and game.phase == GamePhase.PRE_FLOP:
+                game.apply_action(Action("C", ActionType.CALL))
+            elif cp.name == "D" and game.phase == GamePhase.PRE_FLOP:
+                game.apply_action(Action("D", ActionType.CALL))
+            else:
+                if ActionType.CHECK in legal:
+                    game.apply_action(Action(cp.name, ActionType.CHECK))
+                elif ActionType.CALL in legal:
+                    game.apply_action(Action(cp.name, ActionType.CALL))
+                else:
+                    game.apply_action(Action(cp.name, ActionType.FOLD))
+
+        # 现在应该在 flop 或更后。C bet, D fold
+        if game.phase < GamePhase.RIVER and not players[3].is_folded:
+            # 确保 C 可以行动
+            for _ in range(5):
+                cp = game.players[game.current_player_index]
+                if cp.status != PlayerStatus.ACTIVE:
+                    game.current_player_index = game._get_next_active_player(game.current_player_index)
+                    continue
+                if cp.name == "C":
+                    game.apply_action(Action("C", ActionType.BET, amount=100))
+                elif cp.name == "D":
+                    game.apply_action(Action("D", ActionType.FOLD))
+                else:
+                    if game.phase >= GamePhase.FINISHED:
+                        break
+                    if ActionType.CALL in game.get_legal_actions(cp):
+                        game.apply_action(Action(cp.name, ActionType.CALL))
+                    elif ActionType.FOLD in game.get_legal_actions(cp):
+                        game.apply_action(Action(cp.name, ActionType.FOLD))
+
+        # D 应已弃牌
+        assert players[3].is_folded
+
+        # 到摊牌
+        for _ in range(20):
+            if game.phase >= GamePhase.FINISHED:
+                break
+            cp = game.players[game.current_player_index]
+            if cp.status != PlayerStatus.ACTIVE:
+                game.current_player_index = game._get_next_active_player(game.current_player_index)
+                continue
+            legal = game.get_legal_actions(cp)
+            if ActionType.CHECK in legal:
+                game.apply_action(Action(cp.name, ActionType.CHECK))
+            elif ActionType.CALL in legal:
+                game.apply_action(Action(cp.name, ActionType.CALL))
+            else:
+                game.apply_action(Action(cp.name, ActionType.FOLD))
+
+        # 应完成
+        assert game.phase == GamePhase.FINISHED
+
+
+class TestOddChipDistribution:
+    """无法整除的奇数筹码分配。"""
+
+    def test_even_split_no_odd_chips(self) -> None:
+        """2 人平分 100 筹码，各得 50。"""
+        players = make_players(["A", "B"])
+        game = GameState(players)
+
+        # 设置相同手牌 → 平局
+        board = cards("Ah Kh Qh Jh Th")
+        players[0].hole_cards = cards("2c 3d")
+        players[1].hole_cards = cards("4c 5d")
+
+        hand_results = {
+            "A": HandEvaluator.evaluate(players[0].hole_cards + board),
+            "B": HandEvaluator.evaluate(players[1].hole_cards + board),
+        }
+
+        game._distribute_one_pot(100, players, hand_results)
+
+        # 平分
+        assert game.winners["A"] == 50
+        assert game.winners["B"] == 50
+        assert game.winners["A"] + game.winners["B"] == 100
+
+    def test_odd_chip_split_two_players(self) -> None:
+        """2 人平分 101 筹码，一人得 51，一人得 50。"""
+        players = make_players(["A", "B"])
+        game = GameState(players)
+
+        board = cards("Ah Kh Qh Jh Th")
+        players[0].hole_cards = cards("2c 3d")
+        players[1].hole_cards = cards("4c 5d")
+
+        hand_results = {
+            "A": HandEvaluator.evaluate(players[0].hole_cards + board),
+            "B": HandEvaluator.evaluate(players[1].hole_cards + board),
+        }
+
+        game._distribute_one_pot(101, players, hand_results)
+
+        total = game.winners["A"] + game.winners["B"]
+        assert total == 101
+        assert abs(game.winners["A"] - game.winners["B"]) <= 1
+
+    def test_three_way_tie_odd_chips(self) -> None:
+        """3 人平分 100 筹码，分配为 34+33+33。"""
+        players = make_players(["A", "B", "C"])
+        game = GameState(players)
+
+        board = cards("Ah Kh Qh Jh Th")
+        for p in players:
+            p.hole_cards = cards("2c 3d")
+
+        hand_results = {
+            p.name: HandEvaluator.evaluate(p.hole_cards + board)
+            for p in players
+        }
+
+        game._distribute_one_pot(100, players, hand_results)
+
+        amounts = list(game.winners.values())
+        assert sum(amounts) == 100
+        assert max(amounts) - min(amounts) <= 1
