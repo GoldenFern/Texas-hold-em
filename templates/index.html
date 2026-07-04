@@ -161,7 +161,18 @@
     <!-- ====== LLM 设置弹窗 ====== -->
     <div id="modal-settings" class="modal" style="display:none;">
         <div class="modal-content settings-content">
-            <h2>⚙️ LLM 编排设置</h2>
+            <h2>⚙️ 游戏设置</h2>
+
+            <!-- 牌组皮肤 -->
+            <fieldset class="settings-section">
+                <legend>🃏 牌组皮肤</legend>
+                <div class="form-row deck-skin-row">
+                    <label>当前牌组</label>
+                    <span id="deck-skin-label" class="deck-skin-current">经典 PNG</span>
+                    <button type="button" id="btn-cycle-deck" class="btn btn-sm">切换牌组</button>
+                </div>
+                <p class="form-hint">立即生效，偏好保存在浏览器本地。</p>
+            </fieldset>
 
             <!-- 主力模型 -->
             <fieldset class="settings-section">
@@ -318,6 +329,7 @@
 
     <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/deck.js"></script>
     <script src="/static/js/table.js"></script>
     <script src="/static/js/controls.js"></script>
     <script src="/static/js/settings.js"></script>
