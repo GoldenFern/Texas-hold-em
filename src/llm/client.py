@@ -57,6 +57,8 @@ def configure_llm_traffic_logging(enabled: bool = True) -> None:
     """配置 LLM 流量日志输出到终端。"""
     if enabled:
         os.environ["THP_LLM_LOG_TRAFFIC"] = "1"
+    else:
+        os.environ.pop("THP_LLM_LOG_TRAFFIC", None)
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter("%(message)s"))
     _TRAFFIC_LOGGER.setLevel(logging.INFO if enabled else logging.WARNING)
