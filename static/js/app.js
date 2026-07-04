@@ -364,11 +364,13 @@ const App = {
         if (!data) return;
         const max = (data.actions || []).length;
         const step = Math.min(this._replayStep, max);
+        const isFinalStep = step >= max;
 
         // --- 优先使用步进快照 ---
         const snapshots = data.step_snapshots || [];
+        // 终局步：全下快速发牌会在最后一手动作后再追加摊牌快照，不能用 step 索引
         const snapshot = (snapshots.length > 0)
-            ? snapshots[Math.min(step, snapshots.length - 1)]
+            ? snapshots[isFinalStep ? snapshots.length - 1 : Math.min(step, snapshots.length - 1)]
             : null;
 
         let phaseName = 'PRE_FLOP';
@@ -380,6 +382,9 @@ const App = {
             phaseName = snapshot.phase;
             visibleCards = snapshot.community_cards;
             potTotal = snapshot.pot_total;
+            if (isFinalStep && data.community_cards?.length) {
+                visibleCards = data.community_cards;
+            }
         } else {
             // 兜底：旧 phase_boundaries 逻辑
             const boundaries = data.phase_boundaries || [0];
