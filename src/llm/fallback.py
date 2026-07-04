@@ -17,6 +17,7 @@ from src.engine.player import Player
 from src.llm.client import (
     LLMClient,
     LLMAPIError,
+    LLMCredentialError,
     LLMError,
     LLMResponse,
     LLMTimeoutError,
@@ -85,7 +86,7 @@ class FallbackChain:
                             action,
                         )
                         return action
-            except (LLMTimeoutError, LLMAPIError, LLMError) as e:
+            except (LLMTimeoutError, LLMAPIError, LLMCredentialError, LLMError) as e:
                 logger.debug("降级 %s 失败: %s", client.config.provider, e)
                 continue
 
