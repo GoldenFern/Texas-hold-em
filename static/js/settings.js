@@ -23,6 +23,7 @@ const LLMSettings = {
     init() {
         document.getElementById('btn-settings').addEventListener('click', () => {
             this._loadSettings();
+            if (typeof DeckSkin !== 'undefined') DeckSkin.updateUILabel();
             document.getElementById('modal-settings').style.display = 'flex';
         });
         document.getElementById('btn-close-settings').addEventListener('click', () => {

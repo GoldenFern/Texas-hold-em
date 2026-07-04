@@ -286,11 +286,11 @@ const UI = {
     _createCardEl(cardStr) {
         const el = document.createElement('div');
         el.className = 'card-mini';
-        const path = Table._cardImgPath(cardStr);
+        const path = DeckSkin.cardPath(cardStr);
         if (path) {
             el.innerHTML = `<img src="${path}" class="card-img" alt="${cardStr}">`;
         } else {
-            el.innerHTML = `<img src="/static/img/cards/aguilar/back.png" class="card-img" alt="?">`;
+            el.innerHTML = `<img src="${DeckSkin.backPath()}" class="card-img" alt="?">`;
         }
         return el;
     },

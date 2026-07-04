@@ -21,8 +21,8 @@
     /* 牌面显示尺寸（PNG 强制缩放到此大小） */
     --card-w-community: 136px;
     --card-h-community: 196px;
-    --card-w-hole: 96px;
-    --card-h-hole: 136px;
+    --card-w-hole: 128px;
+    --card-h-hole: 184px;
     --card-w-mini: 72px;
     --card-h-mini: 100px;
     --card-bg: #fff;
@@ -641,6 +641,13 @@ body {
     font-weight: bold;
     color: var(--gold);
     padding: 0 6px;
+}
+.deck-skin-row {
+    gap: 12px;
+}
+.deck-skin-current {
+    min-width: 6em;
+    color: var(--gold);
 }
 .form-hint {
     font-size: 12px;
