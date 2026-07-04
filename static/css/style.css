@@ -231,6 +231,10 @@ body {
     font-size: 0.7em;
     color: #aaa;
 }
+.player-rebuy {
+    font-size: 0.7em;
+    color: #ff6b6b;
+}
 .dealer-btn {
     display: inline-block;
     background: var(--blue);

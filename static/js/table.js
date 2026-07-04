@@ -129,10 +129,17 @@ const Table = {
                 betDisplay = `<div class="player-bet">下注: $${p.current_bet}</div>`;
             }
 
+            // 重购次数显示
+            let rebuyDisplay = '';
+            if (p.rebuy_count > 0) {
+                rebuyDisplay = `<div class="player-rebuy">重购: ${p.rebuy_count}</div>`;
+            }
+
             spot.innerHTML = `
                 <div class="player-info ${isHuman ? 'human-player' : ''}">
                     <div class="player-name">${dealerBtn} ${p.name} ${blindBadge} ${actionMark}</div>
                     <div class="player-chips">💰 $${p.chips}</div>
+                    ${rebuyDisplay}
                     ${betDisplay}
                     <div class="hole-cards-mini">
                         ${(p.hole_cards || []).map(c => {

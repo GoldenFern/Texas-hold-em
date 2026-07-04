@@ -22,7 +22,7 @@ class PlayerStats:
     call_count: int = 0
     raise_count: int = 0
     total_won: int = 0
-    total_bet: int = 0
+    total_spent: int = 0  # 实际投入底池的总筹码（含盲注、跟注等）
     showdown_count: int = 0
 
     @property
@@ -55,8 +55,8 @@ class PlayerStats:
 
     @property
     def profit(self) -> int:
-        """净利润。"""
-        return self.total_won - self.total_bet
+        """净利润 = 赢得总额 - 实际投入总额。"""
+        return self.total_won - self.total_spent
 
 
 class HandReporter:
@@ -84,20 +84,44 @@ class HandReporter:
                 self.player_stats[name].hands_won += 1
                 self.player_stats[name].total_won += amount
 
-        # 统计动作
+        # 统计动作（所有阶段）
+        from src.utils.constants import ActionType, GamePhase
         for action in history.actions:
             stats = self.player_stats.get(action.player_name)
             if stats is None:
                 continue
-            from src.utils.constants import ActionType
             if action.action_type == ActionType.FOLD:
                 stats.fold_count += 1
             elif action.action_type == ActionType.CALL:
                 stats.call_count += 1
             elif action.action_type in (ActionType.BET, ActionType.RAISE):
                 stats.raise_count += 1
-                if action.amount > 0:
-                    stats.total_bet += action.amount
+
+            # VPIP & PFR：仅统计翻牌前阶段
+            if action.phase == GamePhase.PRE_FLOP:
+                if action.action_type in (ActionType.CALL, ActionType.BET, ActionType.RAISE):
+                    stats.vpip_count += 1
+                if action.action_type in (ActionType.BET, ActionType.RAISE):
+                    stats.pfr_count += 1
+
+        # 计算每位玩家本手实际投入的筹码（含盲注、跟注等）
+        # 快照在摊牌/底池分配之前捕获，chips_after 不含赢得的筹码
+        # 公式: spent = chips_before - chips_after
+        snapshots = getattr(history, 'step_snapshots', None)
+        if snapshots and len(snapshots) >= 2:
+            first = snapshots[0]   # 发牌后、首次行动前的快照
+            last = snapshots[-1]   # 最后行动后、摊牌前的快照
+            first_chips = {p['name']: p['chips'] for p in first.get('players', [])}
+            last_chips = {p['name']: p['chips'] for p in last.get('players', [])}
+            for name in history.players:
+                stats = self.player_stats.get(name)
+                if stats is None:
+                    continue
+                chips_before = first_chips.get(name, 0)
+                chips_after = last_chips.get(name, 0)
+                spent = chips_before - chips_after
+                if spent > 0:
+                    stats.total_spent += spent
 
     def get_stats(self, player_name: str) -> Optional[PlayerStats]:
         """获取指定玩家的统计数据。"""

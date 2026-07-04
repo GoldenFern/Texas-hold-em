@@ -46,6 +46,9 @@ class Player:
     hands_won: int = 0
     total_won: int = 0
 
+    # 重购
+    rebuy_count: int = 0
+
     def reset_for_new_hand(self) -> None:
         """新一局开始，重置手牌相关状态。"""
         self.hole_cards = []
@@ -155,6 +158,18 @@ class Player:
         self.chips += amount
         self.total_won += amount
         self.hands_won += 1
+
+    def rebuy(self, amount: int = 1000) -> bool:
+        """重购筹码（本金输光时借款重新入场）。
+
+        Returns:
+            True 如果执行了重购。
+        """
+        if self.chips > 0:
+            return False
+        self.chips = amount
+        self.rebuy_count += 1
+        return True
 
     # ---- 比较 ----
 

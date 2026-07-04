@@ -143,6 +143,11 @@ class GameState:
         for p in self.players:
             p.reset_for_new_hand()
 
+        # 自动重购：本金输光的玩家重新获得 1000 筹码
+        for p in self.players:
+            if p.chips == 0:
+                p.rebuy(1000)
+
         # 移除无筹码的玩家
         active_players = [p for p in self.players if p.chips > 0]
         if len(active_players) < 2:
@@ -762,6 +767,7 @@ class GameState:
             "is_human": player.is_human,
             "hands_won": player.hands_won,
             "total_won": player.total_won,
+            "rebuy_count": player.rebuy_count,
         }
         if show_hole or (self.phase == GamePhase.FINISHED and not player.is_folded):
             d["hole_cards"] = [str(c) for c in player.hole_cards]
