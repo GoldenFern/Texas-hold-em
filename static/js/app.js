@@ -123,13 +123,9 @@ const App = {
             this._refreshBotRows();
         });
 
-        // 历史回放按钮 — 切换回放模式
+        // 历史回放按钮 — 进入回放模式
         document.getElementById('btn-replay-history').addEventListener('click', () => {
-            if (this._replayActive) {
-                this._exitReplay();
-            } else {
-                this._openReplay();
-            }
+            this._openReplay();
         });
 
         // 新游戏按钮
@@ -165,6 +161,7 @@ const App = {
         document.getElementById('btn-replay-prev').addEventListener('click', () => this._stepReplay(-1));
         document.getElementById('btn-replay-next').addEventListener('click', () => this._stepReplay(1));
         document.getElementById('btn-replay-reset').addEventListener('click', () => this._resetReplay());
+        document.getElementById('btn-replay-exit').addEventListener('click', () => this._exitReplay());
 
         // 回放速度选择
         const speedSel = document.getElementById('replay-speed');
@@ -328,7 +325,8 @@ const App = {
                 // 高亮对应的历史条目
                 this._highlightHistoryItem(data.hand_id);
                 document.getElementById('hand-counter-toolbar').textContent = `回放 #${data.hand_id}`;
-                document.getElementById('btn-replay-history').textContent = '退出回放';
+                const btnReplayHistory = document.getElementById('btn-replay-history');
+                if (btnReplayHistory) btnReplayHistory.style.display = 'none';
 
                 try {
                     this._renderReplayTable();
@@ -355,7 +353,8 @@ const App = {
         // 清除历史条目高亮
         document.querySelectorAll('.history-item').forEach(el =>
             el.classList.remove('history-item-active'));
-        document.getElementById('btn-replay-history').textContent = '🔄 历史回放';
+        const btnReplayHistory = document.getElementById('btn-replay-history');
+        if (btnReplayHistory) btnReplayHistory.style.display = '';
         document.getElementById('hand-counter-toolbar').textContent = this.gameState ? `手牌 #${this.gameState.hand_id}` : '等待开始';
         Controls.setStatus('已退出回放');
         // 恢复牌桌

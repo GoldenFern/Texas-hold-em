@@ -650,6 +650,10 @@ body {
     justify-content: center;
 }
 
+#btn-replay-exit {
+    margin-left: 12px;
+}
+
 /* 回放速度选择器 */
 #replay-speed {
     padding: 2px 4px;
