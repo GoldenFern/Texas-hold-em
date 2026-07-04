@@ -9,7 +9,9 @@
 from __future__ import annotations
 
 import itertools
+import json
 import logging
+import os
 import random
 from typing import Dict, List, Optional, Tuple
 
@@ -21,15 +23,61 @@ logger = logging.getLogger(__name__)
 
 
 # ================================================================
-# 翻牌前手牌胜率表 —— 模块加载时一次性预计算
+# 翻牌前手牌胜率表 —— 文件缓存 + 按需预计算
 # ================================================================
+
+_EQUITY_CACHE_FILE = os.path.join(os.path.dirname(__file__), "preflop_equity.json")
+
+
+def _key_to_str(key: Tuple[int, int, bool]) -> str:
+    """将 (high, low, suited) 元组编码为 JSON 可用的字符串键。"""
+    high, low, suited = key
+    return f"{high},{low},{'1' if suited else '0'}"
+
+
+def _str_to_key(s: str) -> Tuple[int, int, bool]:
+    """从字符串键还原 (high, low, suited)。"""
+    parts = s.split(",")
+    return int(parts[0]), int(parts[1]), parts[2] == "1"
+
+
+def _load_equity_table() -> Dict[Tuple[int, int, bool], float] | None:
+    """从缓存文件加载胜率表，不存在或损坏时返回 None。"""
+    if not os.path.isfile(_EQUITY_CACHE_FILE):
+        return None
+    try:
+        with open(_EQUITY_CACHE_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        table = {_str_to_key(k): v for k, v in raw.items()}
+        logger.info("加载翻牌前胜率表缓存：%d 种手牌", len(table))
+        return table
+    except Exception:
+        logger.warning("胜率表缓存文件损坏，将重新计算")
+        return None
+
+
+def _save_equity_table(table: Dict[Tuple[int, int, bool], float]) -> None:
+    """将胜率表保存到缓存文件。"""
+    raw = {_key_to_str(k): v for k, v in table.items()}
+    try:
+        with open(_EQUITY_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(raw, f, ensure_ascii=False)
+        logger.info("翻牌前胜率表已缓存至 %s", _EQUITY_CACHE_FILE)
+    except OSError as e:
+        logger.warning("胜率表缓存写入失败：%s", e)
+
 
 def _build_preflop_equity_table() -> Dict[Tuple[int, int, bool], float]:
     """构建 169 种起手牌的翻牌前胜率表（vs 1 个随机对手）。
 
     使用 Treys 加速的 Monte Carlo 模拟，每种手牌 500 次模拟。
-    模块加载时执行一次，O(169 × 500) ≈ 84,500 次评估。
+    计算结果会缓存到 JSON 文件，后续启动直接读取。
     """
+    # 先尝试读取缓存
+    cached = _load_equity_table()
+    if cached is not None:
+        return cached
+
     ranks = list(Rank)
     rng = random.Random(42)
     num_sim = 500
@@ -61,6 +109,10 @@ def _build_preflop_equity_table() -> Dict[Tuple[int, int, bool], float]:
                 table[key_suited] = _simulate_equity(hand_suited, rng, num_sim)
 
     logger.info("翻牌前胜率表构建完成：%d 种手牌", len(table))
+
+    # 写入缓存
+    _save_equity_table(table)
+
     return table
 
 
