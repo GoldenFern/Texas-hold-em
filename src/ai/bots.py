@@ -181,37 +181,28 @@ class BoltzmannBot(ABC):
         if ActionType.CALL in legal and to_call > 0:
             action_evs[ActionType.CALL] = win_rate * (pot + to_call) - to_call
 
-        # Bet / Raise（如果可用）
+        # Bet / Raise（如果可用）——胜率驱动下注额
         bet_action = (
             ActionType.BET if ActionType.BET in legal
             else ActionType.RAISE if ActionType.RAISE in legal
             else None
         )
-        if bet_action is not None:
-            # 枚举候选下注额
-            min_raise = (game_state.get_min_raise_amount(player) / bb) if ActionType.RAISE in legal else (player_bet + 1.0)
-            if bet_action == ActionType.BET:
-                min_raise = game_state.big_blind / bb  # 最小主动下注 = BB
-            candidates = []
-            for frac in [0.33, 0.5, 0.75, 1.0, 1.5]:
-                x = round(frac * pot, 1)
-                if min_raise <= x <= max_bet:
-                    candidates.append(x)
-            # 全下候选
-            if max_bet not in candidates and max_bet >= min_raise:
-                candidates.append(max_bet)
-            if not candidates:
-                candidates.append(min_raise)
+        if bet_action is not None and active_opponents >= 0:
+            k = 0.8  # 下注系数
+            x = win_rate * k * pot  # 下注额 (BB)
 
-            best_ev = -float("inf")
-            best_x = candidates[0]
-            for x in candidates:
+            # 确定最小合法下注额
+            if bet_action == ActionType.BET:
+                min_r = game_state.big_blind / bb  # 主动下注 = BB
+            else:
+                min_r = game_state.get_min_raise_amount(player) / bb  # 加注 = min_raise
+
+            if x >= min_r and min_r <= max_bet:
+                # 下注额合法：上限截断（隐含 all-in），无 all-in 候选人
+                x = min(x, max_bet)
                 ev = self._ev_bet(x, pot, win_rate, active_opponents)
-                if ev > best_ev:
-                    best_ev = ev
-                    best_x = x
-            action_evs[bet_action] = best_ev
-            bet_sizes[bet_action] = best_x
+                action_evs[bet_action] = ev
+                bet_sizes[bet_action] = x
 
         # Check 存在时移除 Fold（Fold 严格不优于 Check）
         if ActionType.CHECK in legal and ActionType.FOLD in action_evs:
