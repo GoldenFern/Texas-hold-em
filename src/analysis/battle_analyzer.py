@@ -94,6 +94,18 @@ class BattleAnalyzer:
         # 翻牌前/翻牌/转牌：蒙特卡洛
         num_sims = self.preflop_sims if n_community == 0 else self.postflop_sims
 
+        if num_sims <= 0:
+            # 跳过 MC（Bot 翻牌前用 preflop_hand_strength 查表）
+            odds_ev = self._calc_odds_ev_raw(game, player, active_opponent_count)
+            pot_financials = self._calc_pot_financials(game, player)
+            return {
+                "hand_type_probs": {},
+                "ranking_distribution": [],
+                "odds_ev": odds_ev,
+                "pot_financials": pot_financials,
+                "sim_count": 0,
+            }
+
         # 单次循环同时收集牌型 + 排名
         hand_type_probs, ranking_dist = self._run_monte_carlo(
             hole_cards, community_cards, active_opponent_count, num_sims
@@ -292,6 +304,20 @@ class BattleAnalyzer:
             "ev_judgment": ev_judgment,
             "to_call": to_call,
             "has_call_decision": has_call,
+        }
+
+    def _calc_odds_ev_raw(self, game: GameState, player: Player, opponent_count: int) -> dict:
+        """无需 MC 的赔率/财务裸数据（翻牌前跳过 MC 时使用）。"""
+        to_call = max(0, game.current_bet - player.current_bet)
+        pot_total = game.pot.total
+        return {
+            "win_rate": 0.0,
+            "pot_odds_ratio": round((pot_total + to_call) / to_call, 2) if to_call > 0 else 0.0,
+            "required_equity": round(to_call / (pot_total + to_call) * 100, 1) if to_call > 0 else 0.0,
+            "ev": 0.0,
+            "ev_judgment": "",
+            "to_call": to_call,
+            "has_call_decision": to_call > 0,
         }
 
     # ---- 底池财务 ----
