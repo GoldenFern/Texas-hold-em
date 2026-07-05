@@ -1,16 +1,12 @@
-"""手牌强度与牌型概率 —— 精确 equity 计算。
+"""蒙特卡洛胜率模拟器 —— 估算手牌在当前局面下的胜率。
 
-核心变更：
-- 翻牌前：使用 py-poker-equity 预计算查表（精确、瞬时）
-- 翻牌后：使用精确枚举替代蒙特卡洛模拟（手牌类型概率）
-- 手牌强度（equity vs 随机对手）：py-poker-equity（翻牌前） + Monte Carlo（翻牌后）
+通过随机补全剩余公共牌，模拟 N 次对决，统计获胜/平分概率。
 """
 
 from __future__ import annotations
 
 import itertools
 import random
-from collections import defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
 from src.engine.card import Card, Cards
@@ -19,157 +15,10 @@ from src.engine.hand import HandEvaluator
 from src.utils.constants import HandRank, Rank, Suit
 
 
-# ================================================================
-# py-poker-equity 适配层
-# ================================================================
-
-# py-poker-equity 使用 '10' 表示 10，而非我们的 'T'
-_RANK_TO_EQUITY: dict[str, str] = {
-    "T": "10",
-    "2": "2", "3": "3", "4": "4", "5": "5",
-    "6": "6", "7": "7", "8": "8", "9": "9",
-    "J": "J", "Q": "Q", "K": "K", "A": "A",
-}
-
-# 169 种起手牌的缓存：{canonical_type: strength_pct}
-_preflop_strength_cache: dict[str, float] = {}
-
-
-def _to_equity_str(card: Card) -> str:
-    """将 Card.short_str（如 'Th'）转为 py-poker-equity 格式（'10h'）。"""
-    s = card.short_str  # e.g. "Th"
-    rank_char = s[0]
-    suit_char = s[1]
-    equity_rank = _RANK_TO_EQUITY.get(rank_char, rank_char)
-    return equity_rank + suit_char
-
-
-def _canonical_type(hole_cards: Cards) -> str:
-    """将底牌映射为 169 种标准起手牌类型字符串。
-
-    例：Ah Kh → "AKs", 2h 2c → "22", Ad Kh → "AKo"
-    """
-    r1 = hole_cards[0].rank.short
-    r2 = hole_cards[1].rank.short
-    suited = hole_cards[0].suit == hole_cards[1].suit
-    if r1 == r2:
-        return r1 + r2
-    # 按 rank value 排序，高牌在前
-    v1 = hole_cards[0].rank.value
-    v2 = hole_cards[1].rank.value
-    high, low = (r1, r2) if v1 >= v2 else (r2, r1)
-    suffix = "s" if suited else "o"
-    return high + low + suffix
-
-
-# ================================================================
-# 手牌强度（equity vs 随机对手）
-# ================================================================
-
-def calculate_hand_strength(
-    hole_cards: Cards,
-    community_cards: Optional[Cards] = None,
-) -> float:
-    """计算手牌强度 —— 与一个随机对手的 Heads-up equity。
-
-    翻牌前：枚举 C(50,2)=1225 种对手手牌，用 py-poker-equity 查表精确计算。
-    翻牌后：采样随机对手手牌 + 蒙特卡洛模拟。
-
-    Returns:
-        手牌强度百分比（0.0–100.0）。
-    """
-    community = list(community_cards) if community_cards else []
-
-    if not community:
-        return _preflop_strength_vs_random(hole_cards)
-
-    return _postflop_strength_vs_random(hole_cards, community)
-
-
-def _preflop_strength_vs_random(hole_cards: Cards) -> float:
-    """翻牌前手牌强度：py-poker-equity 精确查表。
-
-    从剩余 50 张牌中枚举所有 C(50,2)=1225 种对手手牌，
-    用 py-poker-equity 的预计算查表获取精确 equity，加权平均。
-    每种 canonical type 只计算一次并缓存。
-    """
-    canonical = _canonical_type(hole_cards)
-    if canonical in _preflop_strength_cache:
-        return _preflop_strength_cache[canonical]
-
-    from py_poker_equity import get_equity
-
-    my_hand_strs = [_to_equity_str(c) for c in hole_cards]
-    known_strs = set(my_hand_strs)
-
-    # 构建剩余牌池
-    all_remaining: list[str] = []
-    for rank_char in "23456789TJQKA":
-        for suit_char in "cdhs":
-            card_str = _RANK_TO_EQUITY.get(rank_char, rank_char) + suit_char
-            if card_str not in known_strs:
-                all_remaining.append(card_str)
-
-    total_equity = 0.0
-    count = 0
-    n = len(all_remaining)
-    for i in range(n):
-        for j in range(i + 1, n):
-            opp_hand = [all_remaining[i], all_remaining[j]]
-            result = get_equity(my_hand_strs, opp_hand)
-            total_equity += result["a_win"] + result["tie"] * 0.5
-            count += 1
-
-    strength = round(total_equity / count, 1)
-    _preflop_strength_cache[canonical] = strength
-    return strength
-
-
-def _postflop_strength_vs_random(
-    hole_cards: Cards,
-    community_cards: list[Card],
-    num_opponent_samples: int = 15,
-    mc_samples: int = 500,
-) -> float:
-    """翻牌后手牌强度：蒙特卡洛 vs 随机对手。
-
-    随机采样 N 个对手手牌，对每个用 heads-up 蒙特卡洛计算 equity，
-    加权平均后返回。每手 MC 仅 500 次模拟，15 个对手 × 500 ≈ 7500 次评估，<30ms。
-    """
-    known: set[Card] = set(hole_cards) | set(community_cards)
-    remaining = [
-        Card(rank=r, suit=s)
-        for r, s in itertools.product(Rank, Suit)
-        if Card(rank=r, suit=s) not in known
-    ]
-
-    calc = EquityCalculator(num_simulations=mc_samples, seed=hash(tuple(hole_cards)) % 10000)
-    rng = random.Random(42)
-
-    total_equity = 0.0
-    actual_samples = 0
-    for _ in range(num_opponent_samples):
-        if len(remaining) < 2:
-            break
-        opp_cards = rng.sample(remaining, 2)
-        win, _, tie = calc.heads_up_equity(hole_cards, opp_cards, community_cards)
-        total_equity += win + tie * 0.5
-        actual_samples += 1
-
-    if actual_samples == 0:
-        return 50.0
-    return round(total_equity / actual_samples * 100, 1)
-
-
-# ================================================================
-# EquityCalculator —— 多玩家蒙特卡洛（LLM Bot 使用）
-# ================================================================
-
 class EquityCalculator:
     """蒙特卡洛胜率计算器。
 
     通过大量随机模拟，估算一手或多手牌的胜率。
-    保留此类供 LLM Bot 多玩家场景使用。
     """
 
     def __init__(self, num_simulations: int = 1000, seed: int = 42) -> None:
@@ -192,8 +41,8 @@ class EquityCalculator:
         Returns:
             {描述: [胜率, 平率, 负率]} 的字典。
         """
-        community = list(community_cards or [])
-        dead = list(dead_cards or [])
+        community = community_cards or []
+        dead = dead_cards or []
 
         # 收集所有已知牌
         known_cards: Set[Card] = set()
@@ -229,7 +78,7 @@ class EquityCalculator:
             # 评估每手牌
             results = []
             for hand in hole_cards_list:
-                all_cards = list(hand) + sim_community
+                all_cards = hand + sim_community
                 results.append(HandEvaluator.evaluate(all_cards))
 
             # 找最佳手牌
@@ -297,23 +146,23 @@ class EquityCalculator:
 
 
 # ================================================================
-# 牌型概率计算
+# 牌型概率计算 —— 实时 Monte Carlo
 # ================================================================
 
 def calculate_hand_type_probs(
     hole_cards: Cards,
     community_cards: Optional[Cards] = None,
-    num_simulations: int = 2000,
+    num_simulations: int = 5000,
 ) -> Dict[str, float]:
     """计算凑到各种牌型的条件概率。
 
-    翻牌后：精确枚举所有剩余公共牌组合（无需随机抽样）。
-    翻牌前：蒙特卡洛模拟（组合数太大 C(50,5)≈2.1M）。
+    基于已知的底牌和公共牌，通过蒙特卡洛模拟估计最终牌型的概率分布。
+    在河牌圈（5 张公共牌全知）时直接评估，无需模拟。
 
     Args:
         hole_cards: 底牌（2 张）。
         community_cards: 已知的公共牌（0–5 张）。
-        num_simulations: 翻牌前蒙特卡洛模拟次数（默认 2000）。
+        num_simulations: 蒙特卡洛模拟次数（默认 5000）。
 
     Returns:
         {牌型中文名: 概率百分比} 的字典，按牌型等级降序排列。
@@ -340,55 +189,17 @@ def calculate_hand_type_probs(
 
     needed = 5 - len(community)
 
-    # 翻牌/转牌：精确枚举（flop: C(47,2)=1081, turn: C(46,1)=46 种组合）
-    if needed <= 2:
-        return _enumerate_hand_type_probs(hole_cards, community, remaining, needed)
-
-    # 翻牌前：蒙特卡洛
+    # 初始化各牌型计数器
     counts = {rank: 0 for rank in HandRank}
+
     rng = random.Random()
     for _ in range(num_simulations):
         sim_community = community + rng.sample(remaining, needed)
-        result = HandEvaluator.evaluate(list(hole_cards) + sim_community)
+        result = HandEvaluator.evaluate(hole_cards + sim_community)
         counts[result.hand_rank] += 1
 
+    # 返回结果（从强到弱排列）
     return {
         rank.display_name: round(counts[rank] / num_simulations * 100, 1)
-        for rank in reversed(HandRank)
-    }
-
-
-def _enumerate_hand_type_probs(
-    hole_cards: Cards,
-    community: list[Card],
-    remaining: list[Card],
-    needed: int,
-) -> Dict[str, float]:
-    """精确枚举所有剩余公共牌组合，统计牌型分布。"""
-    counts = {rank: 0 for rank in HandRank}
-
-    if needed == 1:
-        for card in remaining:
-            result = HandEvaluator.evaluate(
-                list(hole_cards) + community + [card]
-            )
-            counts[result.hand_rank] += 1
-    elif needed == 2:
-        n = len(remaining)
-        for i in range(n):
-            for j in range(i + 1, n):
-                result = HandEvaluator.evaluate(
-                    list(hole_cards) + community + [remaining[i], remaining[j]]
-                )
-                counts[result.hand_rank] += 1
-
-    total = sum(counts.values())
-    if total == 0:
-        # 兜底：不应该到达这里
-        rank = HandRank.HIGH_CARD
-        return {rank.display_name: 100.0 for rank in HandRank}
-
-    return {
-        rank.display_name: round(counts[rank] / total * 100, 1)
         for rank in reversed(HandRank)
     }

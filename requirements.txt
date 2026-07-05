@@ -4,7 +4,6 @@ python-socketio>=5.11.0
 eventlet>=0.35.0
 pytest>=8.0.0
 treys>=0.1.0              # 德州扑克牌力评估（TwoPlusTwo 查表算法）
-py-poker-equity>=0.1.0  # 德州扑克精确 equity 计算（翻牌前查表 + 翻牌后枚举）
 # LLM 集成（可选依赖，按需安装）
 # anthropic>=0.30.0      # Claude API
 openai>=1.0.0          # GPT API

@@ -48,17 +48,39 @@ const UI = {
     },
 
     _updateHandStrength(state, player) {
-        const strength = state.hand_strength;
-        if (strength == null || isNaN(strength)) {
-            document.getElementById('hand-strength-fill').style.width = '0%';
-            document.getElementById('hand-strength-label').textContent =
-                '牌力: --';
-            return;
+        const holeCards = player.hole_cards || [];
+        const communityCards = state.community_cards || [];
+        const allKnown = holeCards.filter(c => c !== '??').concat(
+            communityCards.filter(c => c !== '??')
+        );
+
+        // 估算强度（基于已知牌）
+        let strength = 0;
+        if (holeCards.length === 2 && holeCards[0] !== '??') {
+            // 仅翻牌前
+            const ranks = '23456789TJQKA';
+            const r1 = ranks.indexOf(holeCards[0][0]);
+            const r2 = ranks.indexOf(holeCards[1][0]);
+            if (r1 >= 0 && r2 >= 0) {
+                const suited = holeCards[0][1] === holeCards[1][1];
+                const isPair = r1 === r2;
+                const high = Math.max(r1, r2);
+                const low = Math.min(r1, r2);
+                if (isPair) strength = 0.5 + (high / 13) * 0.5;
+                else if (suited) strength = 0.2 + (high / 13) * 0.3 + (low / 13) * 0.1;
+                else strength = 0.1 + (high / 13) * 0.25 + (low / 13) * 0.05;
+            }
         }
-        const pct = Math.round(strength);
+        if (allKnown.length >= 5) {
+            // 翻牌后有 5+ 张已知牌
+            const validCards = allKnown.slice(0, 7).length;
+            strength = Math.min(1.0, validCards / 7 * 0.8 + 0.1);
+        }
+
+        const pct = Math.round(strength * 100);
         document.getElementById('hand-strength-fill').style.width = pct + '%';
         document.getElementById('hand-strength-label').textContent =
-            `牌力 vs 随机: ${pct}%`;
+            `估算强度: ${pct}%`;
     },
 
     _updatePotOdds(state, player) {

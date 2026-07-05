@@ -14,7 +14,7 @@ from src.engine.game import Action, ActionType, BettingStructure, GameState
 from src.engine.hand import HandEvaluator
 from src.engine.player import Player
 from src.ai.bots import BotBase, BotFactory, BotStyle
-from src.analysis.equity import calculate_hand_type_probs, calculate_hand_strength
+from src.analysis.equity import calculate_hand_type_probs
 from src.analysis.reporter import HandReporter
 from src.server.routes import set_game_manager
 
@@ -354,24 +354,13 @@ class GameManager:
             state["to_call"] = self.game.current_bet - human.current_bet
         else:
             state["legal_actions"] = []
-        # 为人类玩家计算分析数据（仅当底牌可见时）
+        # 为人类玩家计算各牌型概率（仅当底牌可见且手牌未结束时）
         if human and human.hole_cards and human.hole_cards[0] is not None:
-            # 牌型概率分布
             hand_type_probs = calculate_hand_type_probs(
                 hole_cards=human.hole_cards,
                 community_cards=self.game.community_cards,
             )
             state["hand_type_probs"] = hand_type_probs
-
-            # 手牌强度（equity vs 随机对手）
-            try:
-                hand_strength = calculate_hand_strength(
-                    hole_cards=human.hole_cards,
-                    community_cards=self.game.community_cards,
-                )
-                state["hand_strength"] = hand_strength
-            except Exception:
-                state["hand_strength"] = None
         socketio.emit("game_update", state)
 
     def _emit_action_required(self, player_name: str) -> None:
