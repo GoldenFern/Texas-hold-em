@@ -71,22 +71,20 @@ class BattleAnalyzer:
     ) -> dict:
         """执行完整分析，返回前端可用的字典。
 
-        Args:
-            hole_cards: Hero 的底牌（2 张）。
-            community_cards: 已知公共牌（0–5 张）。
-            active_opponent_count: 活跃对手数量（不包含 Hero，不包含已弃牌）。
-            game: 当前 GameState。
-            player: Hero 的 Player 对象。
-
-        Returns:
-            {
-                "hand_type_probs": {牌型中文名: 概率百分比},
-                "ranking_distribution": [{rank: int, desc: str, prob: float}],
-                "odds_ev": {win_rate, pot_odds_ratio, required_equity, implied_odds_ratio, ev},
-                "pot_financials": {pot_total, dead_money, sunk_cost, to_call},
-                "sim_count": 实际执行模拟次数,
-            }
+        每次调用根据输入状态生成确定性种子重置 RNG，
+        保证相同局面下分析结果稳定不抖动。
         """
+        # 确定性种子：基于手牌 + 公共牌 + 对手数 + 跟注额
+        # 跟注额可能在同一轮下注中变化，但 check 不会改变它
+        to_call = max(0, game.current_bet - player.current_bet)
+        state_key = (
+            tuple(c.short_str for c in sorted(hole_cards, key=lambda c: c.short_str)),
+            tuple(c.short_str for c in sorted(community_cards, key=lambda c: c.short_str)),
+            active_opponent_count,
+            to_call,
+        )
+        self._rng = random.Random(hash(state_key) & 0x7FFFFFFF)
+
         n_community = len(community_cards)
 
         # 河牌：全部已知，直接评估

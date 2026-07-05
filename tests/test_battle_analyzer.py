@@ -338,7 +338,7 @@ class TestBattleAnalyzerPerformance:
 
     def test_flop_performance(self) -> None:
         analyzer = BattleAnalyzer(preflop_sims=227, postflop_sims=45, seed=42)
-        hole = cards("Ah Kh")
+        hole = cards("Ac Ks")
         community = cards("Kh 8d 2c")
         players = make_players(["Hero", "Bot1", "Bot2", "Bot3", "Bot4", "Bot5"])
         players[0].is_human = True
@@ -429,3 +429,52 @@ class TestBattleAnalyzerSimCount:
         dist = result["ranking_distribution"]
         assert len(dist) == 1
         assert dist[0]["prob"] == 100.0
+
+    def test_deterministic_results(self) -> None:
+        """相同输入多次调用返回完全一致的结果（同一轮 check 不会抖动）。"""
+        analyzer = BattleAnalyzer(preflop_sims=227, postflop_sims=45, seed=42)
+        hole = cards("Ah Kh")
+        players = make_players(["Hero", "Bot1", "Bot2", "Bot3"])
+        players[0].is_human = True
+        game = make_game(players)
+        # 模拟有人加注后轮到 Hero，跟注状态
+        players[1].total_bet = 20
+        game.pot.add_bet(players[1], 20)
+        game.current_bet = 20
+
+        r1 = analyzer.analyze(
+            hole_cards=hole, community_cards=[],
+            active_opponent_count=3, game=game, player=players[0],
+        )
+        r2 = analyzer.analyze(
+            hole_cards=hole, community_cards=[],
+            active_opponent_count=3, game=game, player=players[0],
+        )
+
+        # 所有分析字段应完全一致
+        assert r1["hand_type_probs"] == r2["hand_type_probs"]
+        assert r1["ranking_distribution"] == r2["ranking_distribution"]
+        assert r1["odds_ev"] == r2["odds_ev"]
+        assert r1["sim_count"] == r2["sim_count"]
+
+    def test_results_change_on_new_community_card(self) -> None:
+        """公共牌翻出后，结果应该变化。"""
+        analyzer = BattleAnalyzer(preflop_sims=100, postflop_sims=20, seed=42)
+        hole = cards("Ah Kh")
+        players = make_players(["Hero", "Bot1", "Bot2"])
+        players[0].is_human = True
+        game = make_game(players)
+
+        r_pre = analyzer.analyze(
+            hole_cards=hole, community_cards=[],
+            active_opponent_count=2, game=game, player=players[0],
+        )
+        community = cards("2d 7h Kc")
+        game.community_cards = community
+        r_post = analyzer.analyze(
+            hole_cards=hole, community_cards=community,
+            active_opponent_count=2, game=game, player=players[0],
+        )
+
+        # 牌型概率应该变化（翻牌前 vs 翻牌后）
+        assert r_pre["hand_type_probs"] != r_post["hand_type_probs"]
