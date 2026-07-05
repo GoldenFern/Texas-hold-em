@@ -764,6 +764,7 @@ class GameState:
                     "status": p.status.name,
                     "current_bet": p.current_bet,
                     "total_bet": p.total_bet,
+                    "rebuy_count": p.rebuy_count,
                     "is_dealer": p.is_dealer,
                     "is_small_blind": p.is_small_blind,
                     "is_big_blind": p.is_big_blind,

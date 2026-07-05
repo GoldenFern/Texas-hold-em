@@ -184,6 +184,96 @@ class TestHandReporterWithSnapshots:
         reporter.record_hand(h)
         assert reporter.player_stats["A"].total_spent == 0
 
+    def test_spent_excludes_rebuy_chips(self) -> None:
+        """重购筹码不应计为实际投入。"""
+        reporter = HandReporter()
+        # A 本局用了重购，B 正常
+        snapshots = [
+            {
+                "players": [
+                    {"name": "A", "chips": 1000, "rebuy_count": 1},
+                    {"name": "B", "chips": 1000, "rebuy_count": 0},
+                ]
+            },
+            {
+                "players": [
+                    {"name": "A", "chips": 0, "rebuy_count": 1},
+                    {"name": "B", "chips": 1020, "rebuy_count": 0},
+                ]
+            },
+        ]
+        h = make_hand_history(
+            hand_id=1, players=["A", "B"], winners={"B": 50}, snapshots=snapshots
+        )
+        reporter.record_hand(h)
+        # A: chips 1000->0, won 0, rebuy=1000 => spent = 0
+        assert reporter.player_stats["A"].total_spent == 0
+        # B: chips 1000->1020, won 50 => spent = 1000-1020+50 = 30
+        assert reporter.player_stats["B"].total_spent == 30
+
+    def test_profit_sums_to_zero(self) -> None:
+        """零和游戏：所有玩家 profit 之和必为 0。"""
+        reporter = HandReporter()
+        snapshots = [
+            {
+                "players": [
+                    {"name": "A", "chips": 1000, "rebuy_count": 0},
+                    {"name": "B", "chips": 1000, "rebuy_count": 0},
+                    {"name": "C", "chips": 1000, "rebuy_count": 0},
+                ]
+            },
+            {
+                "players": [
+                    {"name": "A", "chips": 980, "rebuy_count": 0},
+                    {"name": "B", "chips": 950, "rebuy_count": 0},
+                    {"name": "C", "chips": 1070, "rebuy_count": 0},
+                ]
+            },
+        ]
+        h = make_hand_history(
+            hand_id=1, players=["A", "B", "C"], winners={"C": 100}, snapshots=snapshots
+        )
+        reporter.record_hand(h)
+        profits = [reporter.player_stats[n].profit for n in ["A", "B", "C"]]
+        assert sum(profits) == 0, f"profit sum = {sum(profits)}"
+
+    def test_profit_sums_to_zero_with_rebuy(self) -> None:
+        """有重购时，total_spent 不计入重购筹码，profit 正确反映实际盈亏。"""
+        reporter = HandReporter()
+        # A 重购了 1000 筹码，最终全输光；B 输了 50；C 赢了 1100
+        snapshots = [
+            {
+                "players": [
+                    {"name": "A", "chips": 1000, "rebuy_count": 1},
+                    {"name": "B", "chips": 1000, "rebuy_count": 0},
+                    {"name": "C", "chips": 1000, "rebuy_count": 0},
+                ]
+            },
+            {
+                "players": [
+                    {"name": "A", "chips": 0, "rebuy_count": 1},
+                    {"name": "B", "chips": 950, "rebuy_count": 0},
+                    {"name": "C", "chips": 2050, "rebuy_count": 0},
+                ]
+            },
+        ]
+        h = make_hand_history(
+            hand_id=1, players=["A", "B", "C"],
+            winners={"C": 1100}, snapshots=snapshots
+        )
+        reporter.record_hand(h)
+        a = reporter.player_stats["A"]
+        b = reporter.player_stats["B"]
+        c = reporter.player_stats["C"]
+        # A 的 spent 不是 1000（那 1000 来自重购）
+        assert a.total_spent == 0
+        # B 输了 50
+        assert b.total_spent == 50
+        assert b.profit == -50
+        # C 投了 50，赢了 1100
+        assert c.total_spent == 50
+        assert c.profit == 1050
+
 
 class TestHandReporterQuery:
     """查询方法测试。"""
