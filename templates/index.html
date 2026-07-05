@@ -83,7 +83,7 @@
                     <h3>
                         牌型概率
                         <span id="draw-phase-label" class="phase-label"></span>
-                        <span class="info-icon" data-tip="蒙特卡洛模拟方法：随机补全未知公共牌 m 次，统计每种最终牌型的出现频率。<br><br>数学公式:<br><i>P(牌型) = count(该牌型) / m</i><br><br>m 值：翻牌前及翻牌后均为 2000 次（翻牌前约 1300ms，由 benchmark 实测确定）。">?</span>
+                        <span class="info-icon" data-tip="蒙特卡洛模拟方法：随机补全未知公共牌 m 次，统计每种最终牌型的出现频率。<br><br>数学公式:<br><i>P(牌型) = count(该牌型) / m</i><br><br>m = 2000">?</span>
                     </h3>
                     <div id="hand-type-probs"></div>
                 </div>
@@ -92,7 +92,7 @@
                 <div id="analysis-ranking" class="analysis-section">
                     <h3>
                         排名分布律
-                        <span class="info-icon" data-tip="在对阵 N 个对手时，你的手牌排名位置的概率分布。<br><br>每次模拟：随机给对手发手牌 + 补全公共牌，评估所有玩家手牌后确定你的排名。<br><br>数学公式:<br><i>P(rank=k) = count(你排第 k 名) / m</i><br><br>P(rank=1) 即为胜率：你是唯一最好手牌的概率。">?</span>
+                        <span class="info-icon" data-tip="在对阵 N 个对手时，你的手牌排名位置的概率分布。<br><br>每次模拟：随机给对手发手牌 + 补全公共牌，评估所有玩家手牌后确定你的排名。<br><br>数学公式:<br><i>P(rank=k) = count(你排第 k 名) / m</i><br><br>P(rank=1) 即为胜率：你是唯一最好手牌的概率。<br><br>m = 2000">?</span>
                     </h3>
                     <div id="ranking-distribution"></div>
                 </div>
