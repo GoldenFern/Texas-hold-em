@@ -78,28 +78,41 @@
 
             <!-- 战局分析面板 -->
             <div id="panel-analysis" class="tab-content active">
-                <div id="hand-strength-display">
-                    <h3>手牌强度</h3>
-                    <div id="hand-strength-bar">
-                        <div id="hand-strength-fill"></div>
-                    </div>
-                    <span id="hand-strength-label">--</span>
+                <!-- 区域1: 牌型概率 -->
+                <div id="analysis-hand-type" class="analysis-section">
+                    <h3>
+                        牌型概率
+                        <span id="draw-phase-label" class="phase-label"></span>
+                        <span class="info-icon" data-tip="蒙特卡洛模拟方法：随机补全未知公共牌 m 次，统计每种最终牌型的出现频率。<br><br>数学公式:<br><i>P(牌型) = count(该牌型) / m</i><br><br>m = 2000">?</span>
+                    </h3>
+                    <div id="hand-type-probs"></div>
                 </div>
-                <div id="pot-odds-display">
-                    <h3>底池赔率</h3>
-                    <div id="pot-odds-info">
-                        <div><span>底池:</span><span id="ao-pot">$0</span></div>
-                        <div><span>跟注:</span><span id="ao-to-call">$0</span></div>
-                        <div><span>赔率比:</span><span id="ao-ratio">--</span></div>
-                        <div><span>所需胜率:</span><span id="ao-required">0%</span></div>
-                    </div>
+
+                <!-- 区域2: 排名分布律 -->
+                <div id="analysis-ranking" class="analysis-section">
+                    <h3>
+                        排名分布律
+                        <span class="info-icon" data-tip="在对阵 N 个对手时，你的手牌排名位置的概率分布。<br><br>每次模拟：随机给对手发手牌 + 补全公共牌，评估所有玩家手牌后确定你的排名。<br><br>数学公式:<br><i>P(rank=k) = count(你排第 k 名) / m</i><br><br>P(rank=1) 即为胜率：你是唯一最好手牌的概率。<br><br>m = 2000">?</span>
+                    </h3>
+                    <div id="ranking-distribution"></div>
                 </div>
-                <div id="draw-info-display">
-                    <h3>听牌</h3>
-                    <div id="draw-info">
-                        <span id="draw-flush">同花听牌: --</span>
-                        <span id="draw-straight">顺子听牌: --</span>
-                    </div>
+
+                <!-- 区域3: 赔率与期望值 -->
+                <div id="analysis-odds-ev" class="analysis-section">
+                    <h3>
+                        赔率与期望值
+                        <span class="info-icon" data-tip="基于蒙特卡洛胜率的综合决策指标：<br><br>底池赔率 = (底池 + 跟注额) / 跟注额<br>所需胜率 = 跟注额 / (底池 + 跟注额) × 100%<br>EV = P(win) × 底池 - P(lose) × 跟注额<br><br>EV > 0 表示长期有利，EV < 0 表示长期亏损。<br>无需跟注时不显示 EV，改为显示底池权益。">?</span>
+                    </h3>
+                    <div id="odds-ev-display"></div>
+                </div>
+
+                <!-- 区域4: 底池详情 -->
+                <div id="analysis-pot" class="analysis-section">
+                    <h3>
+                        底池详情
+                        <span class="info-icon" data-tip="当前牌局的财务概览：<br><br>底池总额 = 所有玩家本手牌的投入总和<br>死钱 = 已弃牌玩家投入的无法收回的筹码<br>沉没成本 = 你本手牌已投入的总筹码（含盲注）<br>跟注金额 = 匹配当前最高下注所需的筹码差额<br><br>沉没成本不应影响未来的决策（沉没成本谬误）。">?</span>
+                    </h3>
+                    <div id="pot-financials"></div>
                 </div>
             </div>
 

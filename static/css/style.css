@@ -19,12 +19,12 @@
     --text-secondary: #a0a0a0;
     --border: #333;
     /* 牌面显示尺寸（PNG 强制缩放到此大小） */
-    --card-w-community: 136px;
-    --card-h-community: 196px;
-    --card-w-hole: 128px;
-    --card-h-hole: 184px;
-    --card-w-mini: 72px;
-    --card-h-mini: 100px;
+    --card-w-community: 104px;
+    --card-h-community: 150px;
+    --card-w-hole: 90px;
+    --card-h-hole: 130px;
+    --card-w-mini: 56px;
+    --card-h-mini: 78px;
     --card-bg: #fff;
     --card-red: #d32f2f;
     --card-black: #212121;
@@ -145,8 +145,8 @@ body {
 /* ---- 社区牌 ---- */
 #community-cards {
     display: flex;
-    gap: 10px;
-    margin-bottom: 16px;
+    gap: 8px;
+    margin-bottom: 12px;
 }
 .community-card {
     width: var(--card-w-community);
@@ -184,17 +184,17 @@ body {
     margin-bottom: 12px;
 }
 #pot-amount {
-    font-size: 1.3em;
+    font-size: 1.1em;
     font-weight: bold;
     color: var(--gold-light);
     text-shadow: 0 0 10px rgba(212,168,67,0.4);
 }
 #pot-phase {
-    font-size: 0.8em;
+    font-size: 0.72em;
     color: #aaa;
     background: rgba(0,0,0,0.4);
-    padding: 2px 12px;
-    border-radius: 10px;
+    padding: 2px 10px;
+    border-radius: 8px;
 }
 
 /* ---- 玩家位置 ---- */
@@ -224,10 +224,10 @@ body {
 }
 .player-info {
     background: rgba(0,0,0,0.75);
-    border-radius: 8px;
-    padding: 6px 12px;
+    border-radius: 6px;
+    padding: 4px 8px;
     text-align: center;
-    min-width: 100px;
+    min-width: 80px;
     border: 1px solid rgba(255,255,255,0.15);
 }
 .player-info.human-player {
@@ -236,31 +236,31 @@ body {
 }
 .player-name {
     font-weight: bold;
-    font-size: 0.85em;
+    font-size: 0.75em;
     white-space: nowrap;
 }
 .player-chips {
-    font-size: 0.75em;
+    font-size: 0.68em;
     color: var(--gold-light);
 }
 .player-bet {
-    font-size: 0.7em;
+    font-size: 0.62em;
     color: #aaa;
 }
 .player-rebuy {
-    font-size: 0.7em;
+    font-size: 0.62em;
     color: #ff6b6b;
 }
 .dealer-btn {
     display: inline-block;
     background: var(--blue);
     color: #fff;
-    font-size: 0.6em;
-    width: 16px; height: 16px;
+    font-size: 0.55em;
+    width: 14px; height: 14px;
     border-radius: 50%;
-    line-height: 16px;
+    line-height: 14px;
     text-align: center;
-    margin-left: 4px;
+    margin-left: 3px;
 }
 .blind-badge {
     font-size: 0.6em;
@@ -274,8 +274,8 @@ body {
 /* 底牌小图标 */
 .hole-cards-mini {
     display: flex;
-    gap: 4px;
-    margin-top: 4px;
+    gap: 3px;
+    margin-top: 3px;
     justify-content: center;
 }
 .hole-card-mini {
@@ -395,15 +395,215 @@ body {
     border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 
-/* 听牌 */
-#draw-info {
+/* ---- 战局分析面板 ---- */
+.analysis-section {
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.analysis-section:last-child { border-bottom: none; margin-bottom: 0; }
+.analysis-section h3 {
+    font-size: 0.85em;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.phase-label {
+    font-size: 0.7em;
+    font-weight: normal;
+    color: var(--gold);
+    background: rgba(212,168,67,0.12);
+    padding: 1px 8px;
+    border-radius: 8px;
+}
+
+/* 牌型概率条 */
+#hand-type-probs {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    font-size: 0.8em;
+    gap: 3px;
+    font-size: 0.75em;
+    max-height: 200px;
+    overflow-y: auto;
 }
-.draw-active { color: #2ecc71; }
-.draw-inactive { color: #666; }
+.htp-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.htp-label {
+    width: 72px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+.htp-bar-container {
+    flex: 1;
+    height: 10px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 5px;
+    overflow: hidden;
+    position: relative;
+}
+.htp-bar-fill {
+    height: 100%;
+    border-radius: 5px;
+    transition: width 0.4s ease;
+    background: var(--blue);
+}
+.htp-bar-fill.htp-prob-high  { background: #2ecc71; }
+.htp-bar-fill.htp-prob-mid   { background: #f39c12; }
+.htp-bar-fill.htp-prob-low   { background: #e74c3c; }
+.htp-bar-fill.htp-prob-zero  { background: transparent; }
+.htp-pct {
+    width: 38px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 0.85em;
+    font-family: monospace;
+    color: var(--text-secondary);
+}
+.htp-pct.htp-pct-positive { color: #2ecc71; }
+.htp-pct.htp-pct-zero     { color: #555; }
+
+/* 排名分布条 */
+#ranking-distribution {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 0.75em;
+    max-height: 180px;
+    overflow-y: auto;
+}
+.rnk-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.rnk-label {
+    width: 62px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 0.82em;
+    color: var(--text-secondary);
+}
+.rnk-row.win-row .rnk-label {
+    color: var(--gold-light);
+    font-weight: 700;
+}
+.rnk-bar-container {
+    flex: 1;
+    height: 12px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.rnk-bar-fill {
+    height: 100%;
+    border-radius: 6px;
+    transition: width 0.4s ease;
+}
+.rnk-row.win-row .rnk-bar-fill { background: linear-gradient(90deg, #27ae60, #2ecc71); }
+.rnk-row:not(.win-row) .rnk-bar-fill { background: linear-gradient(90deg, #6366f1, #818cf8); }
+.rnk-pct {
+    width: 38px;
+    flex-shrink: 0;
+    text-align: right;
+    font-size: 0.85em;
+    font-family: monospace;
+    color: var(--text-secondary);
+}
+.rnk-row.win-row .rnk-pct { color: #2ecc71; font-weight: 700; }
+
+/* 赔率/EV / 底池详情 数据行 */
+.metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 4px 0;
+    font-size: 0.78em;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    gap: 6px;
+}
+.metric-label {
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.metric-value {
+    font-family: monospace;
+    text-align: right;
+    flex-shrink: 0;
+}
+.metric-value.positive { color: #2ecc71; font-weight: 700; }
+.metric-value.negative { color: #e74c3c; font-weight: 700; }
+.metric-value.neutral  { color: var(--text-primary); }
+.metric-judgment {
+    font-size: 0.9em;
+    color: var(--gold-light);
+    font-weight: 700;
+    text-align: center;
+    padding: 6px 0 2px;
+    border-bottom: none;
+}
+.metric-amount {
+    color: var(--gold-light);
+    font-weight: 700;
+}
+
+/* ---- 问号图标与 tooltip ---- */
+.info-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.15);
+    color: var(--text-secondary);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: help;
+    flex-shrink: 0;
+    position: relative;
+    line-height: 1;
+    transition: all 0.2s;
+}
+.info-icon:hover {
+    background: var(--gold);
+    color: #1a1a2e;
+}
+
+/* JS 驱动的 tooltip 弹出层（挂载在 body 上，fixed 定位避开 overflow 裁剪） */
+.tooltip-popup {
+    position: fixed;
+    z-index: 9999;
+    background: #2a2a3e;
+    color: var(--text-primary);
+    border: 1px solid var(--gold);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 1.6;
+    white-space: normal;
+    width: 260px;
+    max-width: 280px;
+    text-align: left;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s, visibility 0.15s;
+}
+.tooltip-popup.show {
+    opacity: 1;
+    visibility: visible;
+}
 
 /* 历史 */
 #history-toolbar {

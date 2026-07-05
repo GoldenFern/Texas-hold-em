@@ -65,8 +65,8 @@ const Table = {
         const tableRect = tableEl.getBoundingClientRect();
         const cx = tableRect.width / 2;
         const cy = tableRect.height / 2;
-        const rx = tableRect.width / 2 - 60;
-        const ry = tableRect.height / 2 - 50;
+        const rx = tableRect.width / 2 - 50;
+        const ry = tableRect.height / 2 - 80;
 
         // 按座位号映射到椭圆上的角度
         players.forEach((p, idx) => {
@@ -77,7 +77,15 @@ const Table = {
             const angle = (p.seat / totalSeats) * 2 * Math.PI - Math.PI / 2;
 
             const x = cx + rx * Math.cos(angle);
-            const y = cy + ry * Math.sin(angle);
+            let y = cy + ry * Math.sin(angle);
+
+            // 顶部/底部的玩家位置向内额外收缩，避免手牌超出桌面边缘
+            const threshold = Math.PI * 0.95 / 2; // ~85.5°
+            if (angle > Math.PI / 2 - threshold && angle < Math.PI / 2 + threshold) {
+                y -= 50; // 底部玩家上移
+            } else if (angle < -Math.PI / 2 + threshold && angle > -Math.PI / 2 - threshold) {
+                y += 15; // 顶部玩家微调下移
+            }
 
             const spot = document.createElement('div');
             spot.className = 'player-spot';

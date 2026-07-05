@@ -26,6 +26,59 @@ const UI = {
                 }
             });
         }
+
+        // Tooltip 系统：JS 驱动，支持 HTML 内容 + fixed 定位防遮挡
+        this._initTooltips();
+    },
+
+    /** 初始化 info-icon hover tooltip */
+    _initTooltips() {
+        const tipEl = document.createElement('div');
+        tipEl.className = 'tooltip-popup';
+        tipEl.id = 'global-tooltip';
+        document.body.appendChild(tipEl);
+
+        let showTimer = null;
+
+        document.addEventListener('mouseenter', (e) => {
+            const icon = e.target.closest('.info-icon');
+            if (!icon) return;
+            const html = icon.getAttribute('data-tip') || '';
+            tipEl.innerHTML = html;
+            showTimer = setTimeout(() => {
+                this._positionTooltip(tipEl, icon);
+                tipEl.classList.add('show');
+            }, 200);
+        }, true);
+
+        document.addEventListener('mouseleave', (e) => {
+            const icon = e.target.closest('.info-icon');
+            if (!icon) return;
+            clearTimeout(showTimer);
+            tipEl.classList.remove('show');
+        }, true);
+    },
+
+    /** 将 tooltip 定位在图标上方 */
+    _positionTooltip(tipEl, icon) {
+        const rect = icon.getBoundingClientRect();
+        const gap = 8;
+        // 默认放在图标上方
+        let top = rect.top - tipEl.offsetHeight - gap;
+        let left = rect.left + rect.width / 2 - tipEl.offsetWidth / 2;
+
+        // 如果上方空间不够，放到下方
+        if (top < 4) {
+            top = rect.bottom + gap;
+        }
+        // 避免超出左边界
+        if (left < 4) left = 4;
+        // 避免超出右边界
+        const maxLeft = window.innerWidth - tipEl.offsetWidth - 4;
+        if (left > maxLeft) left = maxLeft;
+
+        tipEl.style.top = top + 'px';
+        tipEl.style.left = left + 'px';
     },
 
     /** 更新战局分析面板 */
@@ -37,107 +90,148 @@ const UI = {
             return;
         }
 
-        // 手牌强度可视化
-        this._updateHandStrength(state, humanPlayer);
+        // 区域1: 牌型概率
+        this._renderHandTypeProbs(state);
 
-        // 底池赔率
-        this._updatePotOdds(state, humanPlayer);
+        // 区域2: 排名分布律
+        this._renderRankingDistribution(state);
 
-        // 听牌信息
-        this._updateDrawInfo(state, humanPlayer);
+        // 区域3: 赔率与期望值
+        this._renderOddsEv(state);
+
+        // 区域4: 底池详情
+        this._renderPotFinancials(state);
     },
 
-    _updateHandStrength(state, player) {
-        const holeCards = player.hole_cards || [];
-        const communityCards = state.community_cards || [];
-        const allKnown = holeCards.filter(c => c !== '??').concat(
-            communityCards.filter(c => c !== '??')
-        );
+    /** 区域1: 牌型概率 — 柱状图 */
+    _renderHandTypeProbs(state) {
+        const probs = state.hand_type_probs;
+        const container = document.getElementById('hand-type-probs');
+        const phaseLabel = document.getElementById('draw-phase-label');
 
-        // 估算强度（基于已知牌）
-        let strength = 0;
-        if (holeCards.length === 2 && holeCards[0] !== '??') {
-            // 仅翻牌前
-            const ranks = '23456789TJQKA';
-            const r1 = ranks.indexOf(holeCards[0][0]);
-            const r2 = ranks.indexOf(holeCards[1][0]);
-            if (r1 >= 0 && r2 >= 0) {
-                const suited = holeCards[0][1] === holeCards[1][1];
-                const isPair = r1 === r2;
-                const high = Math.max(r1, r2);
-                const low = Math.min(r1, r2);
-                if (isPair) strength = 0.5 + (high / 13) * 0.5;
-                else if (suited) strength = 0.2 + (high / 13) * 0.3 + (low / 13) * 0.1;
-                else strength = 0.1 + (high / 13) * 0.25 + (low / 13) * 0.05;
-            }
-        }
-        if (allKnown.length >= 5) {
-            // 翻牌后有 5+ 张已知牌
-            const validCards = allKnown.slice(0, 7).length;
-            strength = Math.min(1.0, validCards / 7 * 0.8 + 0.1);
-        }
-
-        const pct = Math.round(strength * 100);
-        document.getElementById('hand-strength-fill').style.width = pct + '%';
-        document.getElementById('hand-strength-label').textContent =
-            `估算强度: ${pct}%`;
-    },
-
-    _updatePotOdds(state, player) {
-        const toCall = state.to_call || (state.current_bet - (player.current_bet || 0));
-        const pot = state.pot_total || 0;
-
-        document.getElementById('ao-pot').textContent = '$' + pot;
-        document.getElementById('ao-to-call').textContent = '$' + Math.max(0, toCall);
-        if (toCall > 0) {
-            const ratio = (pot + toCall) / toCall;
-            const required = (toCall / (pot + toCall)) * 100;
-            document.getElementById('ao-ratio').textContent = ratio.toFixed(1) + ':1';
-            document.getElementById('ao-required').textContent = required.toFixed(1) + '%';
-        } else {
-            document.getElementById('ao-ratio').textContent = '--';
-            document.getElementById('ao-required').textContent = '0%';
-        }
-    },
-
-    _updateDrawInfo(state, player) {
-        // 简单的听牌检测（前端版）
-        const community = (state.community_cards || []).filter(c => c !== '??');
-        const hole = (player.hole_cards || []).filter(c => c !== '??');
-        const all = [...hole, ...community];
-
-        if (community.length < 3) {
-            document.getElementById('draw-flush').className = 'draw-inactive';
-            document.getElementById('draw-flush').textContent = '同花听牌: 翻牌后可见';
-            document.getElementById('draw-straight').className = 'draw-inactive';
-            document.getElementById('draw-straight').textContent = '顺子听牌: 翻牌后可见';
+        if (!probs || Object.keys(probs).length === 0) {
+            if (container) container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            if (phaseLabel) phaseLabel.textContent = '';
             return;
         }
 
-        // 同花检测
-        const suits = {};
-        all.forEach(c => {
-            const s = c[1] || c[0];
-            suits[s] = (suits[s] || 0) + 1;
-        });
-        const flushDraw = Object.values(suits).some(n => n >= 4);
-        document.getElementById('draw-flush').textContent =
-            '同花听牌: ' + (flushDraw ? '是 ✓' : '否');
-        document.getElementById('draw-flush').className = flushDraw ? 'draw-active' : 'draw-inactive';
+        // 阶段标签
+        const phaseNames = {'PRE_FLOP':'翻牌前','FLOP':'翻牌','TURN':'转牌','RIVER':'河牌','SHOWDOWN':'河牌'};
+        if (phaseLabel) phaseLabel.textContent = '· ' + (phaseNames[state.phase] || '');
 
-        // 顺子检测（简化）
-        const rankOrder = '23456789TJQKA';
-        const rankVals = all.map(c => rankOrder.indexOf(c[0])).filter(v => v >= 0).sort((a,b)=>a-b);
-        let straightDraw = false;
-        for (let i = 0; i < rankVals.length - 3; i++) {
-            if (rankVals[i+3] - rankVals[i] <= 4) {
-                straightDraw = true;
-                break;
-            }
+        // 牌型显示顺序（从强到弱）
+        const orderedKeys = [
+            '皇家同花顺', '同花顺', '四条', '葫芦', '同花',
+            '顺子', '三条', '两对', '一对', '高牌'
+        ];
+
+        const entries = orderedKeys.filter(k => k in probs).map(k => [k, probs[k]]);
+
+        container.innerHTML = entries.map(([name, pct]) => {
+            const barClass = pct >= 50 ? 'htp-prob-high'
+                           : pct >= 20 ? 'htp-prob-mid'
+                           : pct > 0 ? 'htp-prob-low'
+                           : 'htp-prob-zero';
+            const pctClass = pct > 0 ? 'htp-pct-positive' : 'htp-pct-zero';
+            return `<div class="htp-row">
+                <span class="htp-label">${name}</span>
+                <div class="htp-bar-container">
+                    <div class="htp-bar-fill ${barClass}" style="width:${pct}%"></div>
+                </div>
+                <span class="htp-pct ${pctClass}">${pct.toFixed(1)}%</span>
+            </div>`;
+        }).join('');
+    },
+
+    /** 区域2: 排名分布律 — 柱状图 */
+    _renderRankingDistribution(state) {
+        const dist = state.ranking_distribution;
+        const container = document.getElementById('ranking-distribution');
+        if (!container) return;
+
+        if (!dist || dist.length === 0) {
+            container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            return;
         }
-        document.getElementById('draw-straight').textContent =
-            '顺子听牌: ' + (straightDraw ? '是 ✓' : '否');
-        document.getElementById('draw-straight').className = straightDraw ? 'draw-active' : 'draw-inactive';
+
+        container.innerHTML = dist.map(entry => {
+            const isWin = entry.rank === 1;
+            const rowClass = isWin ? 'rnk-row win-row' : 'rnk-row';
+            const barWidth = Math.max(entry.prob, isWin ? 1 : 0);
+            return `<div class="${rowClass}">
+                <span class="rnk-label">${entry.desc}</span>
+                <div class="rnk-bar-container">
+                    <div class="rnk-bar-fill" style="width:${barWidth}%"></div>
+                </div>
+                <span class="rnk-pct">${entry.prob.toFixed(1)}%</span>
+            </div>`;
+        }).join('');
+    },
+
+    /** 区域3: 赔率与期望值 — 数据行 */
+    _renderOddsEv(state) {
+        const data = state.odds_ev;
+        const container = document.getElementById('odds-ev-display');
+        if (!container) return;
+
+        if (!data) {
+            container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            return;
+        }
+
+        const hasCall = data.has_call_decision;
+        const evClass = hasCall ? (data.ev >= 0 ? 'positive' : 'negative') : 'neutral';
+        const rows = [
+            { label: '胜率', value: data.win_rate + '%' },
+            { label: '底池赔率', value: data.pot_odds_ratio > 0 ? data.pot_odds_ratio + ':1' : '--' },
+            { label: '所需胜率', value: data.required_equity.toFixed(1) + '%' },
+        ];
+
+        const evLabel = hasCall ? '期望值 EV' : '底池权益';
+        const judgmentHtml = hasCall
+            ? `<div class="metric-row metric-judgment">${data.ev_judgment}</div>`
+            : '';
+
+        container.innerHTML =
+            rows.map(r =>
+                `<div class="metric-row">
+                    <span class="metric-label">${r.label}</span>
+                    <span class="metric-value neutral">${r.value}</span>
+                </div>`
+            ).join('') +
+            judgmentHtml +
+            `<div class="metric-row">
+                <span class="metric-label">${evLabel}
+                    <span class="info-icon" data-tip="${hasCall
+                        ? 'EV = P(win) &times; 底池 - P(lose) &times; 跟注额<br><br>EV &gt; 0 表示长期有利，EV &lt; 0 表示长期亏损。'
+                        : '底池权益 = P(win) &times; 底池总额<br><br>无需跟注时不存在 EV 决策，此值表示你当前在底池中的期望份额（若立即摊牌）。'}">?</span>
+                </span>
+                <span class="metric-value ${evClass}">${hasCall ? (data.ev >= 0 ? '+' : '') + '$' + data.ev : '$' + data.ev}</span>
+            </div>`;
+    },
+
+    /** 区域4: 底池详情 — 数据行 */
+    _renderPotFinancials(state) {
+        const data = state.pot_financials;
+        const container = document.getElementById('pot-financials');
+        if (!container) return;
+
+        if (!data) {
+            container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            return;
+        }
+
+        container.innerHTML = [
+            { label: '底池总额', value: '$' + data.pot_total, cls: 'metric-amount' },
+            { label: '死钱', value: '$' + data.dead_money, cls: 'neutral' },
+            { label: '沉没成本', value: '$' + data.sunk_cost, cls: 'neutral' },
+            { label: '跟注金额', value: data.to_call > 0 ? '$' + data.to_call : '免费', cls: 'neutral' },
+        ].map(r =>
+            `<div class="metric-row">
+                <span class="metric-label">${r.label}</span>
+                <span class="metric-value ${r.cls}">${r.value}</span>
+            </div>`
+        ).join('');
     },
 
     /** 更新统计面板 */
