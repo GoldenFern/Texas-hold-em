@@ -4,16 +4,16 @@ sys.path.insert(0, ".")
 
 from src.engine.game import GameState, Action, ActionType
 from src.engine.player import Player
-from src.ai.bots import BoltzmannBot, BotProfile, BotStyle
+from src.ai.bots import BoltzmannBot, BOT_PROFILES, BotStyle
 
 SEED = 20250705
 PROFILES = [
-    BotProfile(BotStyle.NIT, 0.5, "NIT"),
-    BotProfile(BotStyle.TAG, 1.0, "TAG"),
-    BotProfile(BotStyle.SHARK, 2.0, "Shark"),
-    BotProfile(BotStyle.LAG, 4.0, "LAG"),
-    BotProfile(BotStyle.CALLING_STATION, 8.0, "CS"),
-    BotProfile(BotStyle.MANIAC, 16.0, "Maniac"),
+    BOT_PROFILES[BotStyle.NIT],
+    BOT_PROFILES[BotStyle.TAG],
+    BOT_PROFILES[BotStyle.SHARK],
+    BOT_PROFILES[BotStyle.LAG],
+    BOT_PROFILES[BotStyle.CALLING_STATION],
+    BOT_PROFILES[BotStyle.MANIAC],
 ]
 
 def run_hand(hand_id, rng):

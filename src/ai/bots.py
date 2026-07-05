@@ -158,7 +158,12 @@ class BoltzmannBot(ABC):
 
         # 胜率：翻牌前查表，翻牌后 MC
         if game_state.phase == GamePhase.PRE_FLOP:
-            win_rate = preflop_hand_strength(hole_cards) / 100.0
+            raw_equity = preflop_hand_strength(hole_cards) / 100.0
+            # 多人底池修正：指数衰减近似（查表值基于 vs 1 个对手）
+            if active_opponents > 1:
+                win_rate = raw_equity ** (1.0 + 0.3 * (active_opponents - 1))
+            else:
+                win_rate = raw_equity
         else:
             analysis = self.analyzer.analyze(
                 hole_cards, community, active_opponents, game_state, player,
@@ -181,15 +186,19 @@ class BoltzmannBot(ABC):
         if ActionType.CALL in legal and to_call > 0:
             action_evs[ActionType.CALL] = win_rate * (pot + to_call) - to_call
 
-        # Bet / Raise（如果可用）——胜率驱动下注额
+        # Bet / Raise（如果可用）——胜率驱动下注额（含 value + bluff）
         bet_action = (
             ActionType.BET if ActionType.BET in legal
             else ActionType.RAISE if ActionType.RAISE in legal
             else None
         )
         if bet_action is not None and active_opponents >= 0:
-            k = 0.8  # 下注系数
-            x = win_rate * k * pot  # 下注额 (BB)
+            # value sizing: 强牌按胜率比例下注
+            x_value = win_rate * 0.8 * pot
+            # bluff sizing: 弱牌也下注制造弃牌率（下注额更大以增加 fold equity）
+            x_bluff = (1.0 - win_rate) * 1.2 * pot * 0.5
+            x = x_value + x_bluff
+            x = min(x, pot)  # 上限不超过 pot size
 
             # 确定最小合法下注额
             if bet_action == ActionType.BET:
