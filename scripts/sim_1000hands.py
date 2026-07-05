@@ -115,7 +115,7 @@ for rank, (name, profit) in enumerate(sorted(player_profits.items(), key=lambda 
     total_profit += profit
     print(f"  {rank:2d}. {name:16s} {w:5d} {wr:5.1f}% {'+' if profit>=0 else ''}${profit:>9d} {'+' if profit/N>=0 else ''}${profit/N:>+7.0f}")
 
-print(f"\n  Total profit sum: ${total_profit} {'PASS ZERO-SUM' if abs(total_profit) < N else '✗ (expected 0)'}")
+print(f"\n  Total profit sum: ${total_profit} {'PASS ZERO-SUM' if abs(total_profit) < N else 'FAIL (expected 0)'}")
 
 # ---- 全局动作分布 ----
 counts = Counter()
@@ -185,19 +185,11 @@ for name in sorted(bet_amounts_by_bot.keys()):
             print(f"    {k:>10s}: {v:4d} ({v/len(bets)*100:4.1f}%) {bar}")
 
 # ---- 利润趋势（每 200 手） ----
-print(f"\n{'PROFIT TREND (per 200 hands)':-^80}")
-interval_profits = {name: [] for name in player_profits}
-# 重新遍历累计
-running = Counter()
-checkpoint = 0
-for d in all_decisions:
-    # 这个没法从 decisions 重建，跳过趋势
-
 # ---- 质量检查 ----
 bad = [d for d in all_decisions if d["action"] == "FOLD" and d["to_call"] <= 0]
-print(f"\nFree-Check-Folds: {len(bad)}  {'PASS' if len(bad)==0 else '✗'}")
+print(f"\nFree-Check-Folds: {len(bad)}  {'PASS' if len(bad)==0 else 'FAIL'}")
 
 max_zs = max(zero_sum_checks) if zero_sum_checks else 0
-print(f"Max per-hand zero-sum deviation: ${max_zs}  {'PASS' if max_zs < 5 else '✗'}")
+print(f"Max per-hand zero-sum deviation: ${max_zs}  {'PASS' if max_zs < 5 else 'FAIL'}")
 
 print("Done.")
