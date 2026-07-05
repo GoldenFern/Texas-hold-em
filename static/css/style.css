@@ -19,12 +19,12 @@
     --text-secondary: #a0a0a0;
     --border: #333;
     /* 牌面显示尺寸（PNG 强制缩放到此大小） */
-    --card-w-community: 136px;
-    --card-h-community: 196px;
-    --card-w-hole: 128px;
-    --card-h-hole: 184px;
-    --card-w-mini: 72px;
-    --card-h-mini: 100px;
+    --card-w-community: 104px;
+    --card-h-community: 150px;
+    --card-w-hole: 90px;
+    --card-h-hole: 130px;
+    --card-w-mini: 56px;
+    --card-h-mini: 78px;
     --card-bg: #fff;
     --card-red: #d32f2f;
     --card-black: #212121;
@@ -145,8 +145,8 @@ body {
 /* ---- 社区牌 ---- */
 #community-cards {
     display: flex;
-    gap: 10px;
-    margin-bottom: 16px;
+    gap: 8px;
+    margin-bottom: 12px;
 }
 .community-card {
     width: var(--card-w-community);
@@ -184,17 +184,17 @@ body {
     margin-bottom: 12px;
 }
 #pot-amount {
-    font-size: 1.3em;
+    font-size: 1.1em;
     font-weight: bold;
     color: var(--gold-light);
     text-shadow: 0 0 10px rgba(212,168,67,0.4);
 }
 #pot-phase {
-    font-size: 0.8em;
+    font-size: 0.72em;
     color: #aaa;
     background: rgba(0,0,0,0.4);
-    padding: 2px 12px;
-    border-radius: 10px;
+    padding: 2px 10px;
+    border-radius: 8px;
 }
 
 /* ---- 玩家位置 ---- */
@@ -224,10 +224,10 @@ body {
 }
 .player-info {
     background: rgba(0,0,0,0.75);
-    border-radius: 8px;
-    padding: 6px 12px;
+    border-radius: 6px;
+    padding: 4px 8px;
     text-align: center;
-    min-width: 100px;
+    min-width: 80px;
     border: 1px solid rgba(255,255,255,0.15);
 }
 .player-info.human-player {
@@ -236,31 +236,31 @@ body {
 }
 .player-name {
     font-weight: bold;
-    font-size: 0.85em;
+    font-size: 0.75em;
     white-space: nowrap;
 }
 .player-chips {
-    font-size: 0.75em;
+    font-size: 0.68em;
     color: var(--gold-light);
 }
 .player-bet {
-    font-size: 0.7em;
+    font-size: 0.62em;
     color: #aaa;
 }
 .player-rebuy {
-    font-size: 0.7em;
+    font-size: 0.62em;
     color: #ff6b6b;
 }
 .dealer-btn {
     display: inline-block;
     background: var(--blue);
     color: #fff;
-    font-size: 0.6em;
-    width: 16px; height: 16px;
+    font-size: 0.55em;
+    width: 14px; height: 14px;
     border-radius: 50%;
-    line-height: 16px;
+    line-height: 14px;
     text-align: center;
-    margin-left: 4px;
+    margin-left: 3px;
 }
 .blind-badge {
     font-size: 0.6em;
@@ -274,8 +274,8 @@ body {
 /* 底牌小图标 */
 .hole-cards-mini {
     display: flex;
-    gap: 4px;
-    margin-top: 4px;
+    gap: 3px;
+    margin-top: 3px;
     justify-content: center;
 }
 .hole-card-mini {
