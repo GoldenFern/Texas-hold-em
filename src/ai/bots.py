@@ -39,6 +39,7 @@ class BotStyle(Enum):
     MANIAC = "MANIAC"
     SHARK = "SHARK"
     LLM = "LLM"
+    RLCARD = "RLCARD"
 
 
 @dataclass
@@ -88,6 +89,11 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
         display_name="神机妙算",
         description="LLM 驱动。",
     ),
+    BotStyle.RLCARD: BotProfile(
+        style=BotStyle.RLCARD, temperature=0.15,
+        display_name="算无遗策",
+        description="RLCard 强化学习驱动。",
+    ),
 }
 
 # 风格成语 -> BotStyle 映射
@@ -99,6 +105,7 @@ STYLE_IDIOM_MAP: Dict[str, BotStyle] = {
     "随波逐流": BotStyle.CALLING_STATION,
     "狂放不羁": BotStyle.MANIAC,
     "神机妙算": BotStyle.LLM,
+    "算无遗策": BotStyle.RLCARD,
 }
 
 
@@ -295,6 +302,10 @@ class BotFactory:
             from src.llm.llm_bot import LLMBot
             return LLMBot(name or "LLM", seed=seed)
 
+        if style == BotStyle.RLCARD:
+            from src.rlcard.rlcard_bot import RLCardBot
+            return RLCardBot(name or "RLCard", seed=seed)
+
         profile = BOT_PROFILES.get(style)
         if profile is None:
             raise ValueError(f"未知的机器人风格: {style}")
@@ -338,7 +349,7 @@ class BotFactory:
 
     @classmethod
     def list_styles(cls) -> List[BotProfile]:
-        return [p for s, p in BOT_PROFILES.items() if s != BotStyle.LLM]
+        return [p for s, p in BOT_PROFILES.items() if s not in (BotStyle.LLM, BotStyle.RLCARD)]
 
 
 # 兼容别名：LLMBot 通过此引用 BotBase
