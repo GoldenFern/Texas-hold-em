@@ -112,6 +112,10 @@ class BoltzmannBot:
         self, name: str, profile: BotProfile,
         seed: int = 42,
         postflop_sims: int = 200,
+        bet_k_value: float = 0.8,
+        bet_k_bluff: float = 1.2,
+        bet_cap_frac: float = 1.0,
+        bet_strategy: str = "blended",
     ) -> None:
         self.name = name
         self.profile = profile
@@ -120,6 +124,11 @@ class BoltzmannBot:
         self.analyzer = BattleAnalyzer(
             preflop_sims=0, postflop_sims=postflop_sims, seed=seed,
         )
+        # 下注参数
+        self.bet_k_value = bet_k_value
+        self.bet_k_bluff = bet_k_bluff
+        self.bet_cap_frac = bet_cap_frac
+        self.bet_strategy = bet_strategy  # "blended", "value_only", "separated"
 
         self.hands_seen: int = 0
 
@@ -192,12 +201,25 @@ class BoltzmannBot:
             else None
         )
         if bet_action is not None and active_opponents >= 0:
-            # value sizing: 强牌按胜率比例下注
-            x_value = win_rate * 0.8 * pot
-            # bluff sizing: 弱牌也下注制造弃牌率（下注额更大以增加 fold equity）
-            x_bluff = (1.0 - win_rate) * 1.2 * pot * 0.5
-            x = x_value + x_bluff
-            x = min(x, pot)  # 上限不超过 pot size
+            cap = self.bet_cap_frac * pot  # 下注上限（pot 的倍数）
+
+            if self.bet_strategy == "value_only":
+                # 纯价值下注：下注额与胜率成正比
+                x = win_rate * self.bet_k_value * pot
+
+            elif self.bet_strategy == "separated":
+                # 分离策略：强牌 value，弱牌 bluff（固定比例）
+                if win_rate > 0.55:
+                    x = win_rate * self.bet_k_value * pot  # 价值下注
+                else:
+                    x = self.bet_k_bluff * pot  # 诈唬下注（固定大小）
+
+            else:  # "blended"（默认/当前策略）
+                x_value = win_rate * self.bet_k_value * pot
+                x_bluff = (1.0 - win_rate) * self.bet_k_bluff * pot * 0.5
+                x = x_value + x_bluff
+
+            x = min(x, cap)  # 上限不超过 cap
 
             # 确定最小合法下注额
             if bet_action == ActionType.BET:
