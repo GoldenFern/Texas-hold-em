@@ -577,12 +577,11 @@ body {
     background: var(--gold);
     color: #1a1a2e;
 }
-.info-icon::after {
-    content: attr(data-tip);
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
+
+/* JS 驱动的 tooltip 弹出层（挂载在 body 上，fixed 定位避开 overflow 裁剪） */
+.tooltip-popup {
+    position: fixed;
+    z-index: 9999;
     background: #2a2a3e;
     color: var(--text-primary);
     border: 1px solid var(--gold);
@@ -593,23 +592,17 @@ body {
     line-height: 1.6;
     white-space: normal;
     width: 260px;
+    max-width: 280px;
     text-align: left;
     box-shadow: 0 6px 24px rgba(0,0,0,0.5);
-    z-index: 1000;
     pointer-events: none;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.2s, visibility 0.2s;
+    transition: opacity 0.15s, visibility 0.15s;
 }
-.info-icon:hover::after {
+.tooltip-popup.show {
     opacity: 1;
     visibility: visible;
-}
-/* 当 tooltip 会超出左侧面板时，右对齐 */
-#side-panel .info-icon::after {
-    left: auto;
-    right: 0;
-    transform: none;
 }
 
 /* 历史 */

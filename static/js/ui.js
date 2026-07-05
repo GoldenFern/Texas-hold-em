@@ -26,6 +26,59 @@ const UI = {
                 }
             });
         }
+
+        // Tooltip 系统：JS 驱动，支持 HTML 内容 + fixed 定位防遮挡
+        this._initTooltips();
+    },
+
+    /** 初始化 info-icon hover tooltip */
+    _initTooltips() {
+        const tipEl = document.createElement('div');
+        tipEl.className = 'tooltip-popup';
+        tipEl.id = 'global-tooltip';
+        document.body.appendChild(tipEl);
+
+        let showTimer = null;
+
+        document.addEventListener('mouseenter', (e) => {
+            const icon = e.target.closest('.info-icon');
+            if (!icon) return;
+            const html = icon.getAttribute('data-tip') || '';
+            tipEl.innerHTML = html;
+            showTimer = setTimeout(() => {
+                this._positionTooltip(tipEl, icon);
+                tipEl.classList.add('show');
+            }, 200);
+        }, true);
+
+        document.addEventListener('mouseleave', (e) => {
+            const icon = e.target.closest('.info-icon');
+            if (!icon) return;
+            clearTimeout(showTimer);
+            tipEl.classList.remove('show');
+        }, true);
+    },
+
+    /** 将 tooltip 定位在图标上方 */
+    _positionTooltip(tipEl, icon) {
+        const rect = icon.getBoundingClientRect();
+        const gap = 8;
+        // 默认放在图标上方
+        let top = rect.top - tipEl.offsetHeight - gap;
+        let left = rect.left + rect.width / 2 - tipEl.offsetWidth / 2;
+
+        // 如果上方空间不够，放到下方
+        if (top < 4) {
+            top = rect.bottom + gap;
+        }
+        // 避免超出左边界
+        if (left < 4) left = 4;
+        // 避免超出右边界
+        const maxLeft = window.innerWidth - tipEl.offsetWidth - 4;
+        if (left > maxLeft) left = maxLeft;
+
+        tipEl.style.top = top + 'px';
+        tipEl.style.left = left + 'px';
     },
 
     /** 更新战局分析面板 */
