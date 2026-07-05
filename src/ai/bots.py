@@ -349,7 +349,16 @@ class BotFactory:
 
     @classmethod
     def list_styles(cls) -> List[BotProfile]:
-        return [p for s, p in BOT_PROFILES.items() if s not in (BotStyle.LLM, BotStyle.RLCARD)]
+        styles: List[BotProfile] = []
+        for s, p in BOT_PROFILES.items():
+            if s == BotStyle.LLM:
+                continue
+            if s == BotStyle.RLCARD:
+                from src.rlcard import is_available
+                if not is_available():
+                    continue
+            styles.append(p)
+        return styles
 
 
 # 兼容别名：LLMBot 通过此引用 BotBase

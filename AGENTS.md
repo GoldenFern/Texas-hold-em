@@ -84,4 +84,4 @@ GitHub Issues（`gh` CLI）；外部 PR 不作为 triage 入口。详见 `docs/a
 
 ### Domain docs
 
-单上下文布局：根目录 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。
+多上下文布局：根目录 `CONTEXT-MAP.md` 指向 `CONTEXT.md` + `src/rlcard/CONTEXT.md`。详见 `docs/agents/domain.md`。

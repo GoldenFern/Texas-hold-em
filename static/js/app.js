@@ -3,7 +3,8 @@
  */
 
 // 机器人风格列表（value: 英文键, label: 中文成语）
-const BOT_STYLES = [
+// RLCARD 根据服务端能力动态添加
+const BASE_BOT_STYLES = [
     { value: 'TAG',              label: '老谋深算', temperature: 0.07 },
     { value: 'LAG',              label: '锋芒毕露', temperature: 0.30 },
     { value: 'NIT',              label: '谨小慎微', temperature: 0.03 },
@@ -12,6 +13,9 @@ const BOT_STYLES = [
     { value: 'SHARK',            label: '运筹帷幄', temperature: 0.15 },
     { value: 'LLM',              label: '神机妙算', temperature: 0.15 },
 ];
+
+// 运行时 BOT_STYLES 列表（由 _loadCapabilities 填充）
+let BOT_STYLES = [...BASE_BOT_STYLES];
 
 // 默认机器人名字
 const DEFAULT_BOT_NAMES = ['曹操', '刘备', '孙权', '诸葛', '司马', '周瑜', '吕布', '赵云'];
@@ -26,8 +30,27 @@ const App = {
         this.socket = io();
         this._bindSocketEvents();
         this._bindUIEvents();
-        this._refreshBotRows();  // 生成默认 5 个机器人
+        this._loadCapabilities().then(() => {
+            this._refreshBotRows();  // 能力探针完成后刷新列表
+        });
         console.log('[App] 初始化完成');
+    },
+
+    /** 探测服务端可选能力并更新 BOT_STYLES */
+    _loadCapabilities() {
+        return fetch('/api/capabilities')
+            .then(r => r.json())
+            .then(caps => {
+                BOT_STYLES = [...BASE_BOT_STYLES];
+                if (caps.rlcard) {
+                    BOT_STYLES.push({ value: 'RLCARD', label: '算无遗策', temperature: 0.15 });
+                }
+                console.log('[App] 服务端能力:', caps);
+            })
+            .catch(e => {
+                console.warn('[App] 无法获取服务端能力，使用基础样式列表:', e);
+                BOT_STYLES = [...BASE_BOT_STYLES];
+            });
     },
 
     /** 根据对手数量刷新机器人行 */

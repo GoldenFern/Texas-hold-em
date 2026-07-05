@@ -65,6 +65,23 @@ class GameManager:
             ))
 
             # 机器人玩家
+            has_rlcard = any(BotStyle(cfg.get("style", "TAG")) == BotStyle.RLCARD for cfg in bot_configs)
+            if has_rlcard:
+                if len(bot_configs) != 1:
+                    raise ValueError(
+                        "RLCard Bot 仅支持单人对抗（1 人类 + 1 Bot）。"
+                        f"当前配置了 {len(bot_configs)} 个 Bot，请只保留 1 个。"
+                    )
+                eff_stack = starting_chips / big_blind
+                ref_stack = 100.0
+                deviation = abs(eff_stack - ref_stack) / ref_stack
+                if deviation > 0.20:
+                    print(
+                        f"[GameManager] ⚠ 有效筹码深度 {eff_stack:.0f} BB "
+                        f"与训练参考值 {ref_stack:.0f} BB 偏差 {deviation:.0%}，"
+                        f"RLCard Bot 决策质量可能下降"
+                    )
+
             for i, cfg in enumerate(bot_configs):
                 style_name = cfg.get("style", "TAG")
                 bot_name = cfg.get("name", f"Bot{i+1}")

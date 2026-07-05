@@ -57,12 +57,22 @@ class TestBotFactoryRLCard:
         assert profile.display_name == "算无遗策"
 
     def test_rlcard_not_in_list_styles(self) -> None:
-        """验证 RLCARD（和 LLM）不在 list_styles() 中。"""
+        """验证 LLM 不在 list_styles() 中；RLCARD 仅在有 rlcard 时出现。"""
+        try:
+            import rlcard  # noqa: F401
+            _rl_installed = True
+        except ModuleNotFoundError:
+            _rl_installed = False
+
         profiles = BotFactory.list_styles()
         styles = {p.style for p in profiles}
-        assert BotStyle.RLCARD not in styles
         assert BotStyle.LLM not in styles
-        assert len(profiles) == 6  # 仅 6 种规则 Bot
+        if _rl_installed:
+            assert BotStyle.RLCARD in styles
+            assert len(profiles) == 7  # 6 种规则 Bot + RLCARD
+        else:
+            assert BotStyle.RLCARD not in styles
+            assert len(profiles) == 6  # 仅 6 种规则 Bot
 
     def test_rlcard_not_in_create_all_styles(self) -> None:
         """验证 RLCARD 不在 create_all_styles() 中。"""
