@@ -4,13 +4,13 @@
 
 // 机器人风格列表（value: 英文键, label: 中文成语）
 const BOT_STYLES = [
-    { value: 'TAG',              label: '老谋深算' },
-    { value: 'LAG',              label: '锋芒毕露' },
-    { value: 'NIT',              label: '谨小慎微' },
-    { value: 'CALLING_STATION',  label: '随波逐流' },
-    { value: 'MANIAC',           label: '狂放不羁' },
-    { value: 'SHARK',            label: '运筹帷幄' },
-    { value: 'LLM',              label: '神机妙算' },
+    { value: 'TAG',              label: '老谋深算', temperature: 1.0 },
+    { value: 'LAG',              label: '锋芒毕露', temperature: 4.0 },
+    { value: 'NIT',              label: '谨小慎微', temperature: 0.5 },
+    { value: 'CALLING_STATION',  label: '随波逐流', temperature: 8.0 },
+    { value: 'MANIAC',           label: '狂放不羁', temperature: 16.0 },
+    { value: 'SHARK',            label: '运筹帷幄', temperature: 2.0 },
+    { value: 'LLM',              label: '神机妙算', temperature: 2.0 },
 ];
 
 // 默认机器人名字
@@ -47,19 +47,36 @@ const App = {
                 const opt = document.createElement('option');
                 opt.value = s.value;
                 opt.textContent = s.label;
-                if (idx === i % BOT_STYLES.length) opt.selected = true;  // 轮流默认风格
+                if (idx === i % BOT_STYLES.length) opt.selected = true;
                 select.appendChild(opt);
             });
 
             // 名字输入
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.className = 'bot-name';
-            input.value = DEFAULT_BOT_NAMES[i] || `Bot${i + 1}`;
-            input.maxLength = 12;
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.className = 'bot-name';
+            nameInput.value = DEFAULT_BOT_NAMES[i] || `Bot${i + 1}`;
+            nameInput.maxLength = 12;
+
+            // 温度输入
+            const tempInput = document.createElement('input');
+            tempInput.type = 'number';
+            tempInput.className = 'bot-temperature';
+            tempInput.step = '0.1';
+            tempInput.min = '0.1';
+            tempInput.max = '30';
+            tempInput.style.width = '55px';
+            const defaultStyle = BOT_STYLES[i % BOT_STYLES.length];
+            tempInput.value = defaultStyle.temperature;
+            // 风格切换时自动更新温度
+            select.addEventListener('change', () => {
+                const sel = BOT_STYLES.find(s => s.value === select.value);
+                if (sel) tempInput.value = sel.temperature;
+            });
 
             row.appendChild(select);
-            row.appendChild(input);
+            row.appendChild(nameInput);
+            row.appendChild(tempInput);
             container.appendChild(row);
         }
     },
@@ -551,7 +568,8 @@ const App = {
         botRows.forEach(row => {
             const style = row.querySelector('.bot-style').value;
             const name = row.querySelector('.bot-name').value || style;
-            bots.push({ style, name });
+            const temperature = parseFloat(row.querySelector('.bot-temperature')?.value) || 2.0;
+            bots.push({ style, name, temperature });
         });
 
         document.getElementById('modal-new-game').style.display = 'none';

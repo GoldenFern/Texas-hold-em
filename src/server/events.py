@@ -13,7 +13,7 @@ from flask_socketio import SocketIO
 from src.engine.game import Action, ActionType, BettingStructure, GameState
 from src.engine.hand import HandEvaluator
 from src.engine.player import Player
-from src.ai.bots import BotBase, BotFactory, BotStyle
+from src.ai.bots import BoltzmannBot, BotFactory, BotStyle
 from src.analysis.battle_analyzer import BattleAnalyzer
 from src.analysis.reporter import HandReporter
 from src.server.routes import set_game_manager
@@ -27,7 +27,7 @@ class GameManager:
 
     def __init__(self) -> None:
         self.game: Optional[GameState] = None
-        self.bots: Dict[str, BotBase] = {}
+        self.bots: Dict[str, Any] = {}
         self.human_player_name: str = ""
         self.reporter = HandReporter()
         self.analyzer = BattleAnalyzer()
@@ -89,7 +89,10 @@ class GameManager:
                         seed=hash(bot_name) % 10000,
                     )
                 else:
-                    bot = BotFactory.create(style, name=bot_name, seed=hash(bot_name) % 10000)
+                    t = cfg.get("temperature")
+                    bot = BotFactory.create(style, name=bot_name,
+                                            seed=hash(bot_name) % 10000,
+                                            temperature=t)
                 self.bots[bot_name] = bot
                 players.append(Player(
                     name=bot_name, chips=starting_chips, seat=i + 1,

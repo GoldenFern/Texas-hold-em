@@ -219,8 +219,7 @@ def register_routes(app: Flask) -> None:
                 "style": p.style.value,
                 "display_name": p.display_name,
                 "description": p.description,
-                "aggression": p.aggression,
-                "bluff_frequency": p.bluff_frequency,
+                "temperature": p.temperature,
             }
             for p in profiles
         ])
