@@ -185,7 +185,6 @@ const UI = {
             { label: '胜率', value: data.win_rate + '%' },
             { label: '底池赔率', value: data.pot_odds_ratio > 0 ? data.pot_odds_ratio + ':1' : '--' },
             { label: '所需胜率', value: data.required_equity.toFixed(1) + '%' },
-            { label: '隐含赔率', value: data.implied_odds_ratio > 0 ? data.implied_odds_ratio + ':1' : '--' },
         ];
 
         const evLabel = hasCall ? '期望值 EV' : '底池权益';

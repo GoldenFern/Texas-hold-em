@@ -225,7 +225,7 @@ class TestBattleAnalyzerOddsEv:
 
         odds_ev = result["odds_ev"]
         for key in ("win_rate", "pot_odds_ratio", "required_equity",
-                     "implied_odds_ratio", "ev", "ev_judgment", "to_call",
+                     "ev", "ev_judgment", "to_call",
                      "has_call_decision"):
             assert key in odds_ev, f"missing {key}"
 

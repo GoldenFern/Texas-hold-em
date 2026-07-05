@@ -272,14 +272,6 @@ class BattleAnalyzer:
             pot_odds_ratio = 0.0
             required_equity = 0.0
 
-        # 隐含赔率（简化：预估未来可能再下注 = 当前底池的 30%）
-        estimated_future = int(pot_total * 0.3)
-        if to_call > 0:
-            total_potential = pot_total + to_call + estimated_future
-            implied_odds_ratio = round(total_potential / to_call, 2)
-        else:
-            implied_odds_ratio = 0.0
-
         # EV / 底池权益
         if to_call > 0:
             ev = round(win_rate * pot_total - (1.0 - win_rate) * to_call, 2)
@@ -296,8 +288,6 @@ class BattleAnalyzer:
             "win_rate": round(win_rate * 100, 1),
             "pot_odds_ratio": pot_odds_ratio,
             "required_equity": required_equity,
-            "implied_odds_ratio": implied_odds_ratio,
-            "estimated_future_bets": estimated_future,
             "ev": ev,
             "ev_judgment": ev_judgment,
             "to_call": to_call,
