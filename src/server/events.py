@@ -14,7 +14,7 @@ from src.engine.game import Action, ActionType, BettingStructure, GameState
 from src.engine.hand import HandEvaluator
 from src.engine.player import Player
 from src.ai.bots import BotBase, BotFactory, BotStyle
-from src.analysis.equity import calculate_hand_type_probs
+from src.analysis.battle_analyzer import BattleAnalyzer
 from src.analysis.reporter import HandReporter
 from src.server.routes import set_game_manager
 
@@ -30,6 +30,7 @@ class GameManager:
         self.bots: Dict[str, BotBase] = {}
         self.human_player_name: str = ""
         self.reporter = HandReporter()
+        self.analyzer = BattleAnalyzer()
         self._lock = Lock()
         self._bot_running: bool = False
         self._bot_wake_event = Event()
@@ -354,13 +355,25 @@ class GameManager:
             state["to_call"] = self.game.current_bet - human.current_bet
         else:
             state["legal_actions"] = []
-        # 为人类玩家计算各牌型概率（仅当底牌可见且手牌未结束时）
+        # 为人类玩家计算战局分析数据（仅当底牌可见时）
         if human and human.hole_cards and human.hole_cards[0] is not None:
-            hand_type_probs = calculate_hand_type_probs(
-                hole_cards=human.hole_cards,
-                community_cards=self.game.community_cards,
+            # 统计活跃对手（未弃牌、非人类、仍在游戏中）
+            active_opponents = sum(
+                1 for p in self.game.players
+                if not p.is_folded and p.name != human.name and p.status.value < 3
             )
-            state["hand_type_probs"] = hand_type_probs
+            analysis = self.analyzer.analyze(
+                hole_cards=human.hole_cards,
+                community_cards=list(self.game.community_cards),
+                active_opponent_count=active_opponents,
+                game=self.game,
+                player=human,
+            )
+            state["hand_type_probs"] = analysis["hand_type_probs"]
+            state["ranking_distribution"] = analysis["ranking_distribution"]
+            state["odds_ev"] = analysis["odds_ev"]
+            state["pot_financials"] = analysis["pot_financials"]
+            state["sim_count"] = analysis["sim_count"]
         socketio.emit("game_update", state)
 
     def _emit_action_required(self, player_name: str) -> None:

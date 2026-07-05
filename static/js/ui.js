@@ -37,91 +37,34 @@ const UI = {
             return;
         }
 
-        // 手牌强度可视化
-        this._updateHandStrength(state, humanPlayer);
+        // 区域1: 牌型概率
+        this._renderHandTypeProbs(state);
 
-        // 底池赔率
-        this._updatePotOdds(state, humanPlayer);
+        // 区域2: 排名分布律
+        this._renderRankingDistribution(state);
 
-        // 牌型概率
-        this._updateHandTypeProbs(state, humanPlayer);
+        // 区域3: 赔率与期望值
+        this._renderOddsEv(state);
+
+        // 区域4: 底池详情
+        this._renderPotFinancials(state);
     },
 
-    _updateHandStrength(state, player) {
-        const holeCards = player.hole_cards || [];
-        const communityCards = state.community_cards || [];
-        const allKnown = holeCards.filter(c => c !== '??').concat(
-            communityCards.filter(c => c !== '??')
-        );
-
-        // 估算强度（基于已知牌）
-        let strength = 0;
-        if (holeCards.length === 2 && holeCards[0] !== '??') {
-            // 仅翻牌前
-            const ranks = '23456789TJQKA';
-            const r1 = ranks.indexOf(holeCards[0][0]);
-            const r2 = ranks.indexOf(holeCards[1][0]);
-            if (r1 >= 0 && r2 >= 0) {
-                const suited = holeCards[0][1] === holeCards[1][1];
-                const isPair = r1 === r2;
-                const high = Math.max(r1, r2);
-                const low = Math.min(r1, r2);
-                if (isPair) strength = 0.5 + (high / 13) * 0.5;
-                else if (suited) strength = 0.2 + (high / 13) * 0.3 + (low / 13) * 0.1;
-                else strength = 0.1 + (high / 13) * 0.25 + (low / 13) * 0.05;
-            }
-        }
-        if (allKnown.length >= 5) {
-            // 翻牌后有 5+ 张已知牌
-            const validCards = allKnown.slice(0, 7).length;
-            strength = Math.min(1.0, validCards / 7 * 0.8 + 0.1);
-        }
-
-        const pct = Math.round(strength * 100);
-        document.getElementById('hand-strength-fill').style.width = pct + '%';
-        document.getElementById('hand-strength-label').textContent =
-            `估算强度: ${pct}%`;
-    },
-
-    _updatePotOdds(state, player) {
-        const toCall = state.to_call || (state.current_bet - (player.current_bet || 0));
-        const pot = state.pot_total || 0;
-
-        document.getElementById('ao-pot').textContent = '$' + pot;
-        document.getElementById('ao-to-call').textContent = '$' + Math.max(0, toCall);
-        if (toCall > 0) {
-            const ratio = (pot + toCall) / toCall;
-            const required = (toCall / (pot + toCall)) * 100;
-            document.getElementById('ao-ratio').textContent = ratio.toFixed(1) + ':1';
-            document.getElementById('ao-required').textContent = required.toFixed(1) + '%';
-        } else {
-            document.getElementById('ao-ratio').textContent = '--';
-            document.getElementById('ao-required').textContent = '0%';
-        }
-    },
-
-    _updateHandTypeProbs(state, player) {
+    /** 区域1: 牌型概率 — 柱状图 */
+    _renderHandTypeProbs(state) {
         const probs = state.hand_type_probs;
         const container = document.getElementById('hand-type-probs');
         const phaseLabel = document.getElementById('draw-phase-label');
 
         if (!probs || Object.keys(probs).length === 0) {
-            container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            if (container) container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
             if (phaseLabel) phaseLabel.textContent = '';
             return;
         }
 
-        // 显示当前阶段标签
-        const community = (state.community_cards || []).filter(c => c !== '??');
-        const phaseNames = {0: '翻牌前', 1: '翻牌前', 2: '翻牌', 3: '转牌', 4: '河牌'};
-        const phaseVal = state.phase === 'PRE_FLOP' ? 1
-                       : state.phase === 'FLOP' ? 2
-                       : state.phase === 'TURN' ? 3
-                       : state.phase === 'RIVER' ? 4
-                       : state.phase === 'SHOWDOWN' ? 4 : 0;
-        if (phaseLabel) {
-            phaseLabel.textContent = '· ' + (phaseNames[phaseVal] || '');
-        }
+        // 阶段标签
+        const phaseNames = {'PRE_FLOP':'翻牌前','FLOP':'翻牌','TURN':'转牌','RIVER':'河牌','SHOWDOWN':'河牌'};
+        if (phaseLabel) phaseLabel.textContent = '· ' + (phaseNames[state.phase] || '');
 
         // 牌型显示顺序（从强到弱）
         const orderedKeys = [
@@ -129,10 +72,7 @@ const UI = {
             '顺子', '三条', '两对', '一对', '高牌'
         ];
 
-        // 按 order 排列 probs
-        const entries = orderedKeys
-            .filter(k => k in probs)
-            .map(k => [k, probs[k]]);
+        const entries = orderedKeys.filter(k => k in probs).map(k => [k, probs[k]]);
 
         container.innerHTML = entries.map(([name, pct]) => {
             const barClass = pct >= 50 ? 'htp-prob-high'
@@ -148,6 +88,88 @@ const UI = {
                 <span class="htp-pct ${pctClass}">${pct.toFixed(1)}%</span>
             </div>`;
         }).join('');
+    },
+
+    /** 区域2: 排名分布律 — 柱状图 */
+    _renderRankingDistribution(state) {
+        const dist = state.ranking_distribution;
+        const container = document.getElementById('ranking-distribution');
+        if (!container) return;
+
+        if (!dist || dist.length === 0) {
+            container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            return;
+        }
+
+        container.innerHTML = dist.map(entry => {
+            const isWin = entry.rank === 1;
+            const rowClass = isWin ? 'rnk-row win-row' : 'rnk-row';
+            const barWidth = Math.max(entry.prob, isWin ? 1 : 0);
+            return `<div class="${rowClass}">
+                <span class="rnk-label">${entry.desc}</span>
+                <div class="rnk-bar-container">
+                    <div class="rnk-bar-fill" style="width:${barWidth}%"></div>
+                </div>
+                <span class="rnk-pct">${entry.prob.toFixed(1)}%</span>
+            </div>`;
+        }).join('');
+    },
+
+    /** 区域3: 赔率与期望值 — 数据行 */
+    _renderOddsEv(state) {
+        const data = state.odds_ev;
+        const container = document.getElementById('odds-ev-display');
+        if (!container) return;
+
+        if (!data) {
+            container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            return;
+        }
+
+        const evClass = data.ev >= 0 ? 'positive' : 'negative';
+        const rows = [
+            { label: '胜率', value: data.win_rate + '%' },
+            { label: '底池赔率', value: data.pot_odds_ratio > 0 ? data.pot_odds_ratio + ':1' : '--' },
+            { label: '所需胜率', value: data.required_equity.toFixed(1) + '%' },
+            { label: '隐含赔率', value: data.implied_odds_ratio > 0 ? data.implied_odds_ratio + ':1' : '--' },
+        ];
+
+        container.innerHTML =
+            rows.map(r =>
+                `<div class="metric-row">
+                    <span class="metric-label">${r.label}</span>
+                    <span class="metric-value neutral">${r.value}</span>
+                </div>`
+            ).join('') +
+            `<div class="metric-row metric-judgment">${data.ev_judgment}</div>` +
+            `<div class="metric-row">
+                <span class="metric-label">期望值 EV</span>
+                <span class="metric-value ${evClass}">${data.ev >= 0 ? '+' : ''}$${data.ev}</span>
+            </div>`;
+    },
+
+    /** 区域4: 底池详情 — 数据行 */
+    _renderPotFinancials(state) {
+        const data = state.pot_financials;
+        const container = document.getElementById('pot-financials');
+        if (!container) return;
+
+        if (!data) {
+            container.innerHTML = '<span class="draw-inactive">等待数据...</span>';
+            return;
+        }
+
+        container.innerHTML = [
+            { label: '底池总额', value: '$' + data.pot_total, cls: 'metric-amount' },
+            { label: '死钱', value: '$' + data.dead_money, cls: 'neutral' },
+            { label: '沉没成本', value: '$' + data.sunk_cost, cls: 'neutral' },
+            { label: '跟注金额', value: data.to_call > 0 ? '$' + data.to_call : '免费', cls: 'neutral' },
+        ].map(r =>
+            `<div class="metric-row">
+                <span class="metric-label">${r.label}</span>
+                <span class="metric-value ${r.cls}">${r.value}</span>
+            </div>`
+        ).join('');
     },
 
     /** 更新统计面板 */
