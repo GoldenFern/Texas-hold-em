@@ -225,10 +225,12 @@ class TestBattleAnalyzerOddsEv:
 
         odds_ev = result["odds_ev"]
         for key in ("win_rate", "pot_odds_ratio", "required_equity",
-                     "implied_odds_ratio", "ev", "ev_judgment", "to_call"):
+                     "implied_odds_ratio", "ev", "ev_judgment", "to_call",
+                     "has_call_decision"):
             assert key in odds_ev, f"missing {key}"
 
-    def test_no_call_ev_is_free(self) -> None:
+    def test_no_call_shows_equity(self) -> None:
+        """to_call=0 时应显示底池权益而非 EV。"""
         analyzer = BattleAnalyzer(preflop_sims=227, postflop_sims=45, seed=42)
         hole = cards("Ah Kh")
         players = make_players(["Hero", "Bot1", "Bot2"])
@@ -242,7 +244,8 @@ class TestBattleAnalyzerOddsEv:
         )
 
         assert result["odds_ev"]["to_call"] == 0
-        assert result["odds_ev"]["pot_odds_ratio"] == 0.0
+        assert result["odds_ev"]["has_call_decision"] is False
+        assert "底池权益" in result["odds_ev"]["ev_judgment"]
 
     def test_aa_has_positive_ev(self) -> None:
         analyzer = BattleAnalyzer(preflop_sims=227, postflop_sims=45, seed=42)
@@ -263,6 +266,7 @@ class TestBattleAnalyzerOddsEv:
         )
 
         assert result["odds_ev"]["to_call"] == 40
+        assert result["odds_ev"]["has_call_decision"] is True
         assert result["odds_ev"]["ev"] > 0
 
 

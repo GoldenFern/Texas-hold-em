@@ -179,13 +179,19 @@ const UI = {
             return;
         }
 
-        const evClass = data.ev >= 0 ? 'positive' : 'negative';
+        const hasCall = data.has_call_decision;
+        const evClass = hasCall ? (data.ev >= 0 ? 'positive' : 'negative') : 'neutral';
         const rows = [
             { label: '胜率', value: data.win_rate + '%' },
             { label: '底池赔率', value: data.pot_odds_ratio > 0 ? data.pot_odds_ratio + ':1' : '--' },
             { label: '所需胜率', value: data.required_equity.toFixed(1) + '%' },
             { label: '隐含赔率', value: data.implied_odds_ratio > 0 ? data.implied_odds_ratio + ':1' : '--' },
         ];
+
+        const evLabel = hasCall ? '期望值 EV' : '底池权益';
+        const judgmentHtml = hasCall
+            ? `<div class="metric-row metric-judgment">${data.ev_judgment}</div>`
+            : '';
 
         container.innerHTML =
             rows.map(r =>
@@ -194,10 +200,14 @@ const UI = {
                     <span class="metric-value neutral">${r.value}</span>
                 </div>`
             ).join('') +
-            `<div class="metric-row metric-judgment">${data.ev_judgment}</div>` +
+            judgmentHtml +
             `<div class="metric-row">
-                <span class="metric-label">期望值 EV</span>
-                <span class="metric-value ${evClass}">${data.ev >= 0 ? '+' : ''}$${data.ev}</span>
+                <span class="metric-label">${evLabel}
+                    <span class="info-icon" data-tip="${hasCall
+                        ? 'EV = P(win) &times; 底池 - P(lose) &times; 跟注额<br><br>EV &gt; 0 表示长期有利，EV &lt; 0 表示长期亏损。'
+                        : '底池权益 = P(win) &times; 底池总额<br><br>无需跟注时不存在 EV 决策，此值表示你当前在底池中的期望份额（若立即摊牌）。'}">?</span>
+                </span>
+                <span class="metric-value ${evClass}">${hasCall ? (data.ev >= 0 ? '+' : '') + '$' + data.ev : '$' + data.ev}</span>
             </div>`;
     },
 

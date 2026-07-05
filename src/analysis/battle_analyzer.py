@@ -282,15 +282,17 @@ class BattleAnalyzer:
         else:
             implied_odds_ratio = 0.0
 
-        # EV = P(win) * avg_pot_share - P(lose) * to_call
+        # EV / 底池权益
         if to_call > 0:
             ev = round(win_rate * pot_total - (1.0 - win_rate) * to_call, 2)
+            ev_judgment = "正期望 [+EV]" if ev >= 0 else "负期望 [-EV]"
+            has_call = True
         else:
-            # 免费看牌：EV = 胜率 * 底池份额
-            ev = round(win_rate * pot_total / (opponent_count + 1), 2)
-
-        # EV 正负判断
-        ev_judgment = "正期望 [+EV]" if ev >= 0 else "负期望 [-EV]"
+            # 无需跟注，不存在 EV 决策——显示底池权益（期望份额）
+            equity = round(win_rate * pot_total, 2)
+            ev = equity
+            ev_judgment = "免跟注 · 底池权益"
+            has_call = False
 
         return {
             "win_rate": round(win_rate * 100, 1),
@@ -301,6 +303,7 @@ class BattleAnalyzer:
             "ev": ev,
             "ev_judgment": ev_judgment,
             "to_call": to_call,
+            "has_call_decision": has_call,
         }
 
     # ---- 底池财务 ----
