@@ -4,17 +4,17 @@
 
 // 机器人风格列表（value: 英文键, label: 中文成语）
 const BOT_STYLES = [
-    { value: 'TAG',              label: '老谋深算', temperature: 0.07 },
-    { value: 'LAG',              label: '锋芒毕露', temperature: 0.30 },
-    { value: 'NIT',              label: '谨小慎微', temperature: 0.03 },
-    { value: 'CALLING_STATION',  label: '随波逐流', temperature: 0.60 },
-    { value: 'MANIAC',           label: '狂放不羁', temperature: 1.20 },
-    { value: 'SHARK',            label: '运筹帷幄', temperature: 0.15 },
-    { value: 'LLM',              label: '神机妙算', temperature: 0.15 },
+    { value: 'NIT',    label: 'NIT T=0.03',    temperature: 0.03 },
+    { value: 'TAG',    label: 'TAG T=0.07',    temperature: 0.07 },
+    { value: 'SHARK',  label: 'Shark T=0.15',  temperature: 0.15 },
+    { value: 'LAG',    label: 'LAG T=0.30',    temperature: 0.30 },
+    { value: 'CALLING_STATION', label: 'CS T=0.60',     temperature: 0.60 },
+    { value: 'MANIAC', label: 'MANIAC T=1.20', temperature: 1.20 },
+    { value: 'LLM',    label: 'LLM',            temperature: 0.15 },
 ];
 
 // 默认机器人名字
-const DEFAULT_BOT_NAMES = ['曹操', '刘备', '孙权', '诸葛', '司马', '周瑜', '吕布', '赵云'];
+const DEFAULT_BOT_NAMES = ['NIT', 'TAG', 'Shark', 'LAG', 'CS', 'MANIAC'];
 
 const App = {
     socket: null,

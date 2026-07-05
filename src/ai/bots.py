@@ -55,50 +55,50 @@ class BotProfile:
 BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     BotStyle.NIT: BotProfile(
         style=BotStyle.NIT, temperature=0.03,
-        display_name="谨小慎微",
+        display_name="NIT T=0.03",
         description="极冷。近乎确定性，只选 EV 最高的动作。",
     ),
     BotStyle.TAG: BotProfile(
         style=BotStyle.TAG, temperature=0.07,
-        display_name="老谋深算",
+        display_name="TAG T=0.07",
         description="偏冷。明显偏好高 EV 动作，中强牌入池。",
     ),
     BotStyle.SHARK: BotProfile(
         style=BotStyle.SHARK, temperature=0.15,
-        display_name="运筹帷幄",
+        display_name="Shark T=0.15",
         description="温和均衡，EV 驱动决策。",
     ),
     BotStyle.LAG: BotProfile(
         style=BotStyle.LAG, temperature=0.30,
-        display_name="锋芒毕露",
+        display_name="LAG T=0.30",
         description="偏热。EV 差异被部分抹平，更爱探索和施压。",
     ),
     BotStyle.CALLING_STATION: BotProfile(
         style=BotStyle.CALLING_STATION, temperature=0.60,
-        display_name="随波逐流",
+        display_name="CS T=0.60",
         description="热。Fold 的 EV 优势不明显，几乎不弃牌。",
     ),
     BotStyle.MANIAC: BotProfile(
         style=BotStyle.MANIAC, temperature=1.20,
-        display_name="狂放不羁",
+        display_name="MANIAC T=1.20",
         description="极热。近乎均匀随机，无视牌力。",
     ),
     BotStyle.LLM: BotProfile(
         style=BotStyle.LLM, temperature=0.15,
-        display_name="神机妙算",
+        display_name="LLM",
         description="LLM 驱动。",
     ),
 }
 
-# 风格成语 -> BotStyle 映射
+# 风格显示名 -> BotStyle 映射
 STYLE_IDIOM_MAP: Dict[str, BotStyle] = {
-    "谨小慎微": BotStyle.NIT,
-    "老谋深算": BotStyle.TAG,
-    "运筹帷幄": BotStyle.SHARK,
-    "锋芒毕露": BotStyle.LAG,
-    "随波逐流": BotStyle.CALLING_STATION,
-    "狂放不羁": BotStyle.MANIAC,
-    "神机妙算": BotStyle.LLM,
+    "NIT T=0.03": BotStyle.NIT,
+    "TAG T=0.07": BotStyle.TAG,
+    "Shark T=0.15": BotStyle.SHARK,
+    "LAG T=0.30": BotStyle.LAG,
+    "CS T=0.60": BotStyle.CALLING_STATION,
+    "MANIAC T=1.20": BotStyle.MANIAC,
+    "LLM": BotStyle.LLM,
 }
 
 
