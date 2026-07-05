@@ -38,8 +38,8 @@ class TestBotCreation:
         assert len(names) == 6
 
     def test_custom_temperature(self) -> None:
-        bot = BotFactory.create(BotStyle.SHARK, temperature=3.5, seed=42)
-        assert bot.temperature == 3.5
+        bot = BotFactory.create(BotStyle.SHARK, temperature=0.25, seed=42)
+        assert bot.temperature == 0.25
 
 
 class TestBoltzmannBotFolding:

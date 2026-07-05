@@ -51,40 +51,40 @@ class BotProfile:
     description: str = ""
 
 
-# 温度预设（由 scripts/benchmark_temperature.py 预实验确定）
+# 温度预设（pot 标度系数；T = coefficient * pot, 单位 BB）
 BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     BotStyle.NIT: BotProfile(
-        style=BotStyle.NIT, temperature=0.5,
+        style=BotStyle.NIT, temperature=0.03,
         display_name="谨小慎微",
         description="极冷。近乎确定性，只选 EV 最高的动作。",
     ),
     BotStyle.TAG: BotProfile(
-        style=BotStyle.TAG, temperature=1.0,
+        style=BotStyle.TAG, temperature=0.07,
         display_name="老谋深算",
         description="偏冷。明显偏好高 EV 动作，中强牌入池。",
     ),
     BotStyle.SHARK: BotProfile(
-        style=BotStyle.SHARK, temperature=2.0,
+        style=BotStyle.SHARK, temperature=0.15,
         display_name="运筹帷幄",
         description="温和均衡，EV 驱动决策。",
     ),
     BotStyle.LAG: BotProfile(
-        style=BotStyle.LAG, temperature=4.0,
+        style=BotStyle.LAG, temperature=0.30,
         display_name="锋芒毕露",
         description="偏热。EV 差异被部分抹平，更爱探索和施压。",
     ),
     BotStyle.CALLING_STATION: BotProfile(
-        style=BotStyle.CALLING_STATION, temperature=8.0,
+        style=BotStyle.CALLING_STATION, temperature=0.60,
         display_name="随波逐流",
         description="热。Fold 的 EV 优势不明显，几乎不弃牌。",
     ),
     BotStyle.MANIAC: BotProfile(
-        style=BotStyle.MANIAC, temperature=16.0,
+        style=BotStyle.MANIAC, temperature=1.20,
         display_name="狂放不羁",
         description="极热。近乎均匀随机，无视牌力。",
     ),
     BotStyle.LLM: BotProfile(
-        style=BotStyle.LLM, temperature=2.0,
+        style=BotStyle.LLM, temperature=0.15,
         display_name="神机妙算",
         description="LLM 驱动。",
     ),
@@ -208,8 +208,8 @@ class BoltzmannBot(ABC):
         if ActionType.CHECK in legal and ActionType.FOLD in action_evs:
             del action_evs[ActionType.FOLD]
 
-        # 玻尔兹曼采样
-        T = self.temperature
+        # 玻尔兹曼采样（T 以 pot 标度：概率比在不同 pot 下保持恒定）
+        T = self.temperature * pot  # pot-scale coefficient -> actual temperature in BB
         # 数值稳定：减去最大 EV
         max_ev = max(action_evs.values())
         weights = {a: math.exp((e - max_ev) / T) for a, e in action_evs.items()}
@@ -273,7 +273,7 @@ class BoltzmannBot(ABC):
         self.hands_seen = 0
 
     def __repr__(self) -> str:
-        return f"{self.profile.display_name} ({self.name}, T={self.temperature:.1f}BB)"
+        return f"{self.profile.display_name} ({self.name}, T={self.temperature:.2f}*pot)"
 
 
 # ================================================================

@@ -4,13 +4,13 @@
 
 // 机器人风格列表（value: 英文键, label: 中文成语）
 const BOT_STYLES = [
-    { value: 'TAG',              label: '老谋深算', temperature: 1.0 },
-    { value: 'LAG',              label: '锋芒毕露', temperature: 4.0 },
-    { value: 'NIT',              label: '谨小慎微', temperature: 0.5 },
-    { value: 'CALLING_STATION',  label: '随波逐流', temperature: 8.0 },
-    { value: 'MANIAC',           label: '狂放不羁', temperature: 16.0 },
-    { value: 'SHARK',            label: '运筹帷幄', temperature: 2.0 },
-    { value: 'LLM',              label: '神机妙算', temperature: 2.0 },
+    { value: 'TAG',              label: '老谋深算', temperature: 0.07 },
+    { value: 'LAG',              label: '锋芒毕露', temperature: 0.30 },
+    { value: 'NIT',              label: '谨小慎微', temperature: 0.03 },
+    { value: 'CALLING_STATION',  label: '随波逐流', temperature: 0.60 },
+    { value: 'MANIAC',           label: '狂放不羁', temperature: 1.20 },
+    { value: 'SHARK',            label: '运筹帷幄', temperature: 0.15 },
+    { value: 'LLM',              label: '神机妙算', temperature: 0.15 },
 ];
 
 // 默认机器人名字
@@ -62,9 +62,9 @@ const App = {
             const tempInput = document.createElement('input');
             tempInput.type = 'number';
             tempInput.className = 'bot-temperature';
-            tempInput.step = '0.1';
-            tempInput.min = '0.1';
-            tempInput.max = '30';
+            tempInput.step = '0.01';
+            tempInput.min = '0.01';
+            tempInput.max = '3.00';
             tempInput.style.width = '55px';
             const defaultStyle = BOT_STYLES[i % BOT_STYLES.length];
             tempInput.value = defaultStyle.temperature;
@@ -568,7 +568,7 @@ const App = {
         botRows.forEach(row => {
             const style = row.querySelector('.bot-style').value;
             const name = row.querySelector('.bot-name').value || style;
-            const temperature = parseFloat(row.querySelector('.bot-temperature')?.value) || 2.0;
+            const temperature = parseFloat(row.querySelector('.bot-temperature')?.value) || 0.15;
             bots.push({ style, name, temperature });
         });
 
