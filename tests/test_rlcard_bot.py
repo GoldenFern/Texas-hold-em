@@ -220,7 +220,7 @@ class TestMirrorAdapterObservation:
 
         obs = MirrorAdapter.encode_observation(game, hero)
         assert obs[52] == pytest.approx(50.0, rel=1e-4)
-        assert obs[53] == pytest.approx(20.0, rel=1e-4)
+        assert obs[53] == pytest.approx(50.0, rel=1e-4)
 
     def test_bb_normalization_invariant(self) -> None:
         """BB 归一化不变量：1000/10 ≡ 100/1。"""

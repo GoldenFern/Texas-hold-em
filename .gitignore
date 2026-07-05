@@ -37,6 +37,7 @@ Thumbs.db
 
 # RLCard model artifacts
 models/rlcard/*.pth
+models/rlcard/*.tar
 
 # pytest
 .pytest_cache/

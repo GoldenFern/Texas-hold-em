@@ -352,7 +352,7 @@ class TestActualConfigFile:
     def test_project_config_file_loads(self) -> None:
         """config/rlcard_config.json 存在且可解析。"""
         cfg = load_rlcard_config()
-        assert cfg.agent_type in ("random", "dqn", "nfsp")
+        assert cfg.agent_type in ("random", "dqn", "dmc", "nfsp")
         assert cfg.effective_stack_depth > 0
         assert cfg.hyperparameters.learning_rate > 0
         assert cfg.hyperparameters.batch_size > 0

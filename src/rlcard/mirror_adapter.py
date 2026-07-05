@@ -12,10 +12,10 @@ RLCard NoLimitHoldem 动作抽象：
     3: RAISE_POT       （总投入 = to_call + 1.0 * 行动前底池）
     4: ALL_IN
 
-Observation 编码（54 维）：
+Observation 编码（54 维，见 ``state_encoder``）：
     [0:52)   卡牌 one-hot：底牌 + 公共牌可见位置置 1
     [52]     my_chips / big_blind
-    [53]     opponent_chips / big_blind（单挑对手）
+    [53]     max(active_chips) / big_blind（与 RLCard env 对齐）
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from typing import List, TYPE_CHECKING
 from src.engine.card import Card
 from src.engine.game import Action, ActionType, GameState
 from src.engine.player import Player
+from src.rlcard import state_encoder
 
 if TYPE_CHECKING:
     import numpy as np
@@ -50,22 +51,8 @@ class MirrorAdapter:
 
     @staticmethod
     def card_to_rlcard_index(card: Card) -> int:
-        """将引擎 Card 转换为 RLCard 0–51 卡牌索引。
-
-        RLCard 编码规则：
-            suit: S=0, H=1, D=2, C=3
-            rank: 2→0, 3→1, ..., K→11, A→12
-            index = suit * 13 + rank
-
-        引擎编码规则：
-            Suit: C=0, D=1, H=2, S=3
-            Rank: 2–14（IntEnum）
-        """
-        # suit 映射：引擎 C(0)→3, D(1)→2, H(2)→1, S(3)→0
-        rl_suit = 3 - card.suit.value
-        # rank 映射：引擎 2–14 → RLCard 0–12
-        rl_rank = card.rank.value - 2
-        return rl_suit * 13 + rl_rank
+        """将引擎 Card 转换为 RLCard 0–51 卡牌索引。"""
+        return state_encoder.card_to_rlcard_index(card)
 
     # ----------------------------------------------------------------
     # Observation 编码
@@ -81,36 +68,7 @@ class MirrorAdapter:
         Returns:
             shape (54,) float32 numpy array.
         """
-        import numpy as np
-
-        bb = float(game_state.big_blind)
-        obs = np.zeros(54, dtype=np.float32)
-
-        # [0:52) 卡牌 one-hot：玩家可见的所有牌
-        for card in player.hole_cards:
-            obs[MirrorAdapter.card_to_rlcard_index(card)] = 1.0
-        for card in game_state.community_cards:
-            obs[MirrorAdapter.card_to_rlcard_index(card)] = 1.0
-
-        # [52] my_chips / BB
-        obs[52] = float(player.chips) / bb
-
-        # [53] opponent_chips / BB（单挑对手）
-        opponent = MirrorAdapter._find_opponent(game_state, player)
-        if opponent is not None:
-            obs[53] = float(opponent.chips) / bb
-
-        return obs
-
-    @staticmethod
-    def _find_opponent(
-        game_state: GameState, player: Player,
-    ) -> Player | None:
-        """在 GameState 中找到与给定 player 对局的对手。"""
-        for p in game_state.players:
-            if p.name != player.name and not p.is_folded:
-                return p
-        return None
+        return state_encoder.encode_from_game_state(game_state, player)
 
     # ----------------------------------------------------------------
     # 合法 RLCard 动作枚举（含切断不合法加注层级）

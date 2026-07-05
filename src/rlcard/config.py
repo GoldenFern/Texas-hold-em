@@ -29,7 +29,7 @@ class RLCardConfig:
     """RLCard Bot 配置。
 
     Attributes:
-        agent_type: "random"（Phase A）| "dqn" | "nfsp"（Phase B+）。
+        agent_type: "random"（Phase A）| "dqn" | "dmc" | "nfsp"（Phase B+）。
         model_path: 训练好的策略工件路径（None 则使用 RandomAgent）。
         effective_stack_depth: 训练参考有效深度（起始筹码 / BB）。
         hyperparameters: 训练超参数桩。
