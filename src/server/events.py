@@ -107,9 +107,11 @@ class GameManager:
                     )
                 else:
                     t = cfg.get("temperature")
+                    rl_cfg = cfg.get("rlcard_config")
                     bot = BotFactory.create(style, name=bot_name,
                                             seed=hash(bot_name) % 10000,
-                                            temperature=t)
+                                            temperature=t,
+                                            rlcard_config=rl_cfg)
                 self.bots[bot_name] = bot
                 players.append(Player(
                     name=bot_name, chips=starting_chips, seat=i + 1,

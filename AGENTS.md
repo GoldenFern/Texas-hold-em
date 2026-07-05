@@ -72,6 +72,18 @@ pip install python-dotenv        # .env 加载
 
 环境变量：`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `THP_LLM_*`（项目专用前缀）。
 
+## RLCard 依赖（可选）
+
+核心游戏无需 RLCard。启用 RLCard Bot 时按需安装：
+
+```bash
+pip install rlcard              # Phase A：RandomAgent（无需训练）
+pip install rlcard[torch]       # Phase B：DQN / NFSP 训练与推理
+```
+
+模型工件放置在 `models/rlcard/`（`*.pth` 已 gitignore）。
+环境变量：`THP_RLCARD_MODEL_PATH` 可覆盖默认模型路径。
+
 ## Agent skills
 
 ### Issue tracker

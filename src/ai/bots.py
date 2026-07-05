@@ -292,11 +292,13 @@ class BotFactory:
 
     @classmethod
     def create(cls, style: BotStyle, name: str = "", seed: int = 42,
-               temperature: float | None = None) -> BoltzmannBot:
+               temperature: float | None = None,
+               rlcard_config: dict | None = None) -> BoltzmannBot:
         """创建指定风格的 Boltzmann-EV Bot。
-        
+
         Args:
             temperature: 自定义温度（若 None 则使用风格预设值）。
+            rlcard_config: bot 级别的 RLCard 配置覆盖字典。
         """
         if style == BotStyle.LLM:
             from src.llm.llm_bot import LLMBot
@@ -304,7 +306,9 @@ class BotFactory:
 
         if style == BotStyle.RLCARD:
             from src.rlcard.rlcard_bot import RLCardBot
-            return RLCardBot(name or "RLCard", seed=seed)
+            from src.rlcard.config import load_rlcard_config
+            rl_config = load_rlcard_config(bot_override=rlcard_config)
+            return RLCardBot(name or "RLCard", seed=seed, rlcard_config=rl_config)
 
         profile = BOT_PROFILES.get(style)
         if profile is None:

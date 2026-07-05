@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 from src.ai.bots import BotBase, BotStyle, BOT_PROFILES
 from src.engine.game import Action, ActionType, GameState
 from src.engine.player import Player
+from src.rlcard.config import RLCardConfig
 
 
 class RLCardBot(BotBase):
@@ -35,10 +36,21 @@ class RLCardBot(BotBase):
         name: str,
         model_path: Optional[str] = None,
         seed: int = 42,
+        rlcard_config: Optional[RLCardConfig] = None,
     ) -> None:
         # 使用 Shark 配置作为降级基准（最接近 GTO）
         profile = BOT_PROFILES[BotStyle.SHARK]
         super().__init__(name, profile, seed)
+
+        # 若传入 RLCardConfig，从中提取配置
+        if rlcard_config is not None:
+            self._agent_type = rlcard_config.agent_type
+            if rlcard_config.model_path is not None:
+                model_path = rlcard_config.model_path
+            self._rlcard_config = rlcard_config
+        else:
+            self._agent_type = "random"
+            self._rlcard_config = None
 
         self._model_path = model_path
         self._agent: Any = None

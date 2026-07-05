@@ -35,5 +35,8 @@ Thumbs.db
 .env
 .env.local
 
+# RLCard model artifacts
+models/rlcard/*.pth
+
 # pytest
 .pytest_cache/
