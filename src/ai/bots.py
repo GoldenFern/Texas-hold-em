@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import math
 import random
-from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -102,7 +101,7 @@ STYLE_IDIOM_MAP: Dict[str, BotStyle] = {
 }
 
 
-class BoltzmannBot(ABC):
+class BoltzmannBot:
     """Boltzmann-EV 统一决策 Bot。
 
     所有合法动作计算 EV（BB 单位），通过 P ∝ exp(EV/T) 采样。
