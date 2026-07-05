@@ -9,25 +9,16 @@
 
 from __future__ import annotations
 
-import itertools
 import random
 import time
 from typing import List, Tuple
 
 from src.engine.card import Card, Cards
 from src.engine.hand import HandEvaluator
+from src.utils._card_helpers import all_cards, random_hand
 from src.utils.constants import HandRank, Rank, Suit
 
 # ---- 辅助函数 ----
-
-def _all_cards() -> List[Card]:
-    return [Card(rank=r, suit=s) for r, s in itertools.product(Rank, Suit)]
-
-
-def _random_hand(rng: random.Random, exclude: List[Card]) -> List[Card]:
-    excluded = {c.short_str for c in exclude}
-    available = [c for c in _all_cards() if c.short_str not in excluded]
-    return rng.sample(available, 2)
 
 
 def _single_iteration_preflop(
@@ -46,12 +37,12 @@ def _single_iteration_preflop(
     # 给 N 个对手随机发手牌（保证对手间不重复）
     opponents: List[List[Card]] = []
     for _ in range(opponent_count):
-        opp_hand = _random_hand(rng, excluded)
+        opp_hand = random_hand(rng, excluded)
         opponents.append(opp_hand)
         excluded.extend(opp_hand)
 
     # 随机补全 5 张公共牌
-    available = [c for c in _all_cards() if c.short_str not in {x.short_str for x in excluded}]
+    available = [c for c in all_cards() if c.short_str not in {x.short_str for x in excluded}]
     sim_board = list(community) + rng.sample(available, 5 - len(community))
 
     # 评估所有手牌
@@ -79,11 +70,11 @@ def _single_iteration_postflop(
 
     opponents = []
     for _ in range(opponent_count):
-        opp_hand = _random_hand(rng, excluded)
+        opp_hand = random_hand(rng, excluded)
         opponents.append(opp_hand)
         excluded.extend(opp_hand)
 
-    available = [c for c in _all_cards() if c.short_str not in {x.short_str for x in excluded}]
+    available = [c for c in all_cards() if c.short_str not in {x.short_str for x in excluded}]
     sim_board = list(community) + rng.sample(available, 5 - len(community))
 
     hero_result = HandEvaluator.evaluate(hero + sim_board)

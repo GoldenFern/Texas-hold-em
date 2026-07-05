@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Tuple
 
 from src.engine.card import Card, Cards
 from src.engine.hand import HandEvaluator, HandResult
+from src.utils._card_helpers import all_cards, random_hand, detect_draws
 from src.utils.constants import ActionType, GamePhase, Rank, Suit
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,7 @@ def _simulate_equity(
     """模拟一手牌 vs 随机对手 + 随机公共牌的胜率。"""
     wins = 0.0
     for _ in range(num_sim):
-        opponent = _random_hand(hand, rng)
+        opponent = random_hand(rng, hand)
         sim_community = _random_community(hand + opponent, rng)
         result_a = HandEvaluator.evaluate(hand + sim_community)
         result_b = HandEvaluator.evaluate(opponent + sim_community)
@@ -133,17 +134,6 @@ def _simulate_equity(
         elif result_a == result_b:
             wins += 0.5
     return round(wins / num_sim * 100.0, 1)
-
-
-def _random_hand(exclude: List[Card], rng: random.Random) -> List[Card]:
-    """从排除指定牌后的牌堆中随机抽取 2 张作为对手手牌。"""
-    excluded = {c.short_str for c in exclude}
-    available = [
-        Card(rank=r, suit=s)
-        for r, s in itertools.product(Rank, Suit)
-        if Card(rank=r, suit=s).short_str not in excluded
-    ]
-    return rng.sample(available, 2)
 
 
 def _random_community(exclude: List[Card], rng: random.Random) -> List[Card]:
@@ -272,27 +262,7 @@ def has_draw(hole_cards: Cards, community_cards: Cards) -> Tuple[bool, bool]:
     """
     if len(community_cards) < 3:
         return False, False
-
-    all_cards = hole_cards + community_cards
-
-    # 同花听牌：同花色 >= 4 张
-    suit_counts: Dict[Suit, int] = {}
-    for c in all_cards:
-        suit_counts[c.suit] = suit_counts.get(c.suit, 0) + 1
-    flush_draw = any(count == 4 for count in suit_counts.values())
-
-    # 顺子听牌：检查是否有 4 张连续的 rank
-    ranks = sorted(set(c.rank.value for c in all_cards))
-    straight_draw = False
-    for i in range(len(ranks) - 3):
-        if ranks[i + 3] - ranks[i] <= 4:
-            straight_draw = True
-            break
-    # 检查 Ace-low wrap
-    if 14 in ranks and {2, 3, 4}.issubset(set(ranks)):
-        straight_draw = True
-
-    return flush_draw, straight_draw
+    return detect_draws(hole_cards, community_cards)
 
 
 # ================================================================

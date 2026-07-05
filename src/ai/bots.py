@@ -349,5 +349,3 @@ class BotFactory:
         return [p for s, p in BOT_PROFILES.items() if s != BotStyle.LLM]
 
 
-# 兼容别名：LLMBot 通过此引用 BotBase
-BotBase = BoltzmannBot

@@ -9,7 +9,6 @@
 
 from __future__ import annotations
 
-import itertools
 import random
 from typing import Dict, List, Optional, Tuple
 
@@ -17,6 +16,7 @@ from src.engine.card import Card, Cards
 from src.engine.game import GameState
 from src.engine.hand import HandEvaluator
 from src.engine.player import Player
+from src.utils._card_helpers import all_cards, random_hand
 from src.utils.constants import HandRank, Rank, Suit
 
 # Benchmark 确定的模拟次数（由 scripts/benchmark_sim.py 生成）
@@ -25,20 +25,6 @@ try:
 except ImportError:
     M_PREFLOP = 227
     M_POSTFLOP = 45
-
-
-# ---- 辅助函数 ----
-
-def _all_cards() -> List[Card]:
-    """全部 52 张牌。"""
-    return [Card(rank=r, suit=s) for r, s in itertools.product(Rank, Suit)]
-
-
-def _random_hand(rng: random.Random, exclude: Cards) -> Cards:
-    """从排除 excluded 后的牌堆中随机抽取 2 张。"""
-    excluded_str = {c.short_str for c in exclude}
-    available = [c for c in _all_cards() if c.short_str not in excluded_str]
-    return rng.sample(available, 2)
 
 
 class BattleAnalyzer:
@@ -153,13 +139,13 @@ class BattleAnalyzer:
             current_excluded: Cards = list(excluded)
             opponent_hands: List[Cards] = []
             for _ in range(opponent_count):
-                opp = _random_hand(self._rng, current_excluded)
+                opp = random_hand(self._rng, current_excluded)
                 opponent_hands.append(opp)
                 current_excluded.extend(opp)
 
             # 随机补全公共牌
             excluded_str = {c.short_str for c in current_excluded}
-            available = [c for c in _all_cards() if c.short_str not in excluded_str]
+            available = [c for c in all_cards() if c.short_str not in excluded_str]
             sim_board = list(community) + self._rng.sample(available, needed)
 
             # 评估 Hero 手牌

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from src.ai.bots import BotBase, BotFactory, BotProfile, BotStyle
+from src.ai.bots import BoltzmannBot, BotFactory, BotProfile, BotStyle
 from src.ai.strategy import (
     has_draw,
     is_premium_hand,
@@ -40,7 +40,7 @@ from src.utils.constants import GamePhase
 logger = logging.getLogger(__name__)
 
 
-class LLMBot(BotBase):
+class LLMBot(BoltzmannBot):
     """LLM 驱动的扑克机器人。
 
     继承 BotBase，覆写 decide() 方法接入 LLM 决策。
