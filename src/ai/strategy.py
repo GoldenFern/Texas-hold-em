@@ -313,13 +313,17 @@ def calculate_pot_odds(call_amount: int, pot_total: int) -> float:
 def position_value(seat: int, dealer_seat: int, num_players: int) -> float:
     """计算位置价值（0.0–1.0，越高越好）。
 
-    庄位 = 1.0, 枪口位 ≈ 0.3。
+    BTN = 1.0（翻牌后最后行动）, UTG ≈ 0.0（翻牌后最先行动）。
+    单挑时非庄位返回 0.5。
     """
     relative_pos = (seat - dealer_seat) % num_players
+    if num_players <= 2:
+        return 0.5 if relative_pos != 0 else 1.0
     if relative_pos == 0:
-        return 0.0
-    pos_val = relative_pos / num_players
-    return round(1.0 - pos_val, 2)
+        return 1.0  # BTN = 最佳位置
+    # relative_pos 越大 → 越晚行动 → 位置越好
+    # relative_pos=1 = UTG（最差）, relative_pos=N-1 = CO（最佳，仅次于 BTN）
+    return round((relative_pos - 1) / (num_players - 2), 2)
 
 
 # ================================================================

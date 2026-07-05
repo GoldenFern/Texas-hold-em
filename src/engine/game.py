@@ -488,14 +488,18 @@ class GameState:
         if self.betting_structure == BettingStructure.NO_LIMIT:
             return player.chips + player.current_bet
         elif self.betting_structure == BettingStructure.POT_LIMIT:
+            to_call = self.current_bet - player.current_bet
+            pot_after_call = self.pot.total + to_call
             return min(
                 player.chips + player.current_bet,
-                self.pot.total + player.current_bet,
+                pot_after_call + player.current_bet + to_call,
             )
         else:  # FIXED_LIMIT
+            big_bet = self.big_blind * 2
+            bet_size = big_bet if self.phase >= GamePhase.TURN else self.big_blind
             return min(
                 player.chips + player.current_bet,
-                self.current_bet + self.big_blind * (4 if self.phase >= GamePhase.TURN else 2),
+                self.current_bet + bet_size,
             )
 
     def get_min_raise_amount(self, player: Player) -> int:
