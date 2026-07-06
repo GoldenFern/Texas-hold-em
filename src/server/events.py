@@ -88,6 +88,8 @@ class GameManager:
                         model=llm_config.primary.model,
                         seed=hash(bot_name) % 10000,
                     )
+                    # 注入 ContextManager 的 reporter 引用
+                    bot.context_manager._sync_opponent_stats(self.reporter)
                 else:
                     t = cfg.get("temperature")
                     bot = BotFactory.create(style, name=bot_name,
@@ -329,6 +331,23 @@ class GameManager:
         except ImportError:
             return False
 
+    def _update_llm_contexts(self, history: Any) -> None:
+        """手牌结束后更新 LLM Bot 的上下文。"""
+        for name, bot in self.bots.items():
+            if not self._is_llm_bot(bot):
+                continue
+            won = name in history.winners if history else False
+            profit = history.winners.get(name, 0) if history and history.winners else 0
+
+            bot.context_manager.end_hand(won=won, profit=profit, reporter=self.reporter)
+
+            if history and hasattr(history, "hole_cards"):
+                for opponent_name, cards in history.hole_cards.items():
+                    if opponent_name != name:
+                        cards_str = " ".join(str(c) for c in cards) if cards else ""
+                        if cards_str:
+                            bot.context_manager.record_showdown(opponent_name, cards_str)
+
     def _get_human_player(self) -> Optional[Player]:
         if self.game is None:
             return None
@@ -413,7 +432,7 @@ class GameManager:
             player_dict = {
                 "name": p.name,
                 "is_folded": is_folded,
-                "is_winner": p.name in winners,
+                "is_winner": (winners.get(p.name, 0) - p.total_bet) > 0,
                 "net_profit": winners.get(p.name, 0) - p.total_bet,
                 "best_five": best_five,
                 "hand_description": hand_description,
@@ -443,6 +462,9 @@ class GameManager:
         """牌局结束回调。"""
         if history is not None:
             self.reporter.record_hand(history)
+
+            # 更新 LLM Bot 的上下文（手牌结果 + 对手摊牌数据）
+            self._update_llm_contexts(history)
             # 构建阶段化的回放数据
             community_cards = [str(c) for c in history.community_cards]
             # 推断每个阶段开始的动作索引（翻牌前→翻牌→转牌→河牌）
@@ -550,6 +572,20 @@ class GameManager:
             "actions": [repr(a) for a in h.actions[-10:]],
             "num_actions": len(h.actions),
         }
+
+    def get_llm_context(self) -> Optional[dict]:
+        """获取最近一次 LLM 调用的完整上下文（供前端调试面板）。
+
+        Returns:
+            包含 system_prompt、user_prompt、raw_response、stats 等的字典，
+            如果没有 LLM Bot 或尚无调用记录则返回 None。
+        """
+        for bot in self.bots.values():
+            if self._is_llm_bot(bot):
+                ctx = getattr(bot, 'last_llm_context', None)
+                if ctx:
+                    return ctx
+        return None
 
     def get_human_player_name(self) -> str:
         return self.human_player_name
