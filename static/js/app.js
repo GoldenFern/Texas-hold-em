@@ -158,12 +158,17 @@ const App = {
         document.getElementById('btn-close-modal').addEventListener('click', () => {
             document.getElementById('modal-new-game').style.display = 'none';
         });
-        document.getElementById('btn-close-result').addEventListener('click', () => {
-            document.getElementById('modal-result').style.display = 'none';
-        });
         document.getElementById('btn-replay-from-result').addEventListener('click', () => {
             document.getElementById('modal-result').style.display = 'none';
             this._openReplay();
+        });
+        document.getElementById('btn-continue-from-result').addEventListener('click', () => {
+            document.getElementById('modal-result').style.display = 'none';
+            this.socket.emit('continue_game');
+        });
+        document.getElementById('btn-end-from-result').addEventListener('click', () => {
+            document.getElementById('modal-result').style.display = 'none';
+            this.socket.emit('end_game');
         });
 
         // 回放控制
@@ -229,8 +234,7 @@ const App = {
         this._switchToHistoryTab();
 
         if (handId) {
-            // 直接加载指定手牌
-            this._replayLoading = false;
+            // 直接加载指定手牌（锁在 _loadReplayHand 的 finally 中释放）
             this._loadReplayHand(handId);
             return;
         }
@@ -289,7 +293,7 @@ const App = {
                 // 隐藏操作按钮，防止"正在打新局+回放"叠加态
                 Controls.disableAll();
                 Controls.setStatus('🔄 回放模式 — 手牌 #' + data.hand_id);
-                // 隐藏继续/新游戏按钮
+                // 隐藏动作按钮
                 document.getElementById('action-buttons').style.display = 'none';
                 const controls = document.getElementById('replay-controls');
                 if (controls) {
@@ -312,6 +316,9 @@ const App = {
             .catch(e => {
                 console.error('Replay: load failed', e);
                 alert('加载回放数据失败: ' + e.message);
+            })
+            .finally(() => {
+                this._replayLoading = false;
             });
     },
 

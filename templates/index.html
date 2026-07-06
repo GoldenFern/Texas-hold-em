@@ -54,10 +54,10 @@
                     <span id="action-to-call"></span>
                 </div>
                 <div id="action-buttons">
-                    <button id="btn-fold" class="btn btn-action btn-danger" disabled>Fold</button>
-                    <button id="btn-check" class="btn btn-action" disabled>Check</button>
-                    <button id="btn-call" class="btn btn-action btn-primary" disabled>Call</button>
-                    <button id="btn-raise" class="btn btn-action btn-warning" disabled>Raise</button>
+                    <button id="btn-fold" class="btn btn-action btn-danger" disabled>弃牌</button>
+                    <button id="btn-check" class="btn btn-action" disabled>过牌</button>
+                    <button id="btn-call" class="btn btn-action btn-primary" disabled>跟注</button>
+                    <button id="btn-raise" class="btn btn-action btn-warning" disabled>加注</button>
                 </div>
                 <div id="bet-controls" style="display:none;">
                     <input type="range" id="bet-slider" min="0" max="1000" value="0" step="1">
@@ -322,7 +322,8 @@
             <div id="result-body"></div>
             <div class="result-buttons">
                 <button id="btn-replay-from-result" class="btn btn-sm">回放本局</button>
-                <button id="btn-close-result" class="btn btn-sm btn-primary">继续游戏</button>
+                <button id="btn-continue-from-result" class="btn btn-sm btn-primary">继续下一局</button>
+                <button id="btn-end-from-result" class="btn btn-sm btn-danger">结束游戏</button>
             </div>
         </div>
     </div>

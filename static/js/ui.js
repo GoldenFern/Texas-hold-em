@@ -245,11 +245,11 @@ const UI = {
                 tbody.innerHTML = stats.map(s => `
                     <tr>
                         <td>${s.name}</td>
-                        <td>${(s.vpip * 100).toFixed(0)}%</td>
-                        <td>${(s.pfr * 100).toFixed(0)}%</td>
-                        <td>${s.aggression_factor.toFixed(1)}</td>
-                        <td>${(s.win_rate * 100).toFixed(0)}%</td>
-                        <td style="color:${s.profit >= 0 ? '#2ecc71' : '#e74c3c'}">$${s.profit}</td>
+                        <td>${((s.vpip ?? 0) * 100).toFixed(0)}%</td>
+                        <td>${((s.pfr ?? 0) * 100).toFixed(0)}%</td>
+                        <td>${(s.aggression_factor ?? 0).toFixed(1)}</td>
+                        <td>${((s.win_rate ?? 0) * 100).toFixed(0)}%</td>
+                        <td style="color:${(s.profit ?? 0) >= 0 ? '#2ecc71' : '#e74c3c'}">$${s.profit ?? 0}</td>
                     </tr>
                 `).join('');
             })
@@ -330,16 +330,23 @@ const UI = {
                     const bv = this._cardRankValue(b[0]);
                     return bv - av;
                 });
+                const holeCards = p.hole_cards || [];
                 const cardRow = document.createElement('div');
                 cardRow.className = 'result-cards-row';
-                sorted.forEach(cs => cardRow.appendChild(this._createCardEl(cs)));
+                sorted.forEach(cs => {
+                    const el = this._createCardEl(cs);
+                    if (holeCards.includes(cs)) {
+                        el.classList.add('card-hole-personal');
+                    }
+                    cardRow.appendChild(el);
+                });
                 row.appendChild(cardRow);
             }
 
             // --- 牌型描述（中列） ---
             const descEl = document.createElement('div');
             descEl.className = 'result-player-desc';
-            descEl.textContent = p.hand_description || '—';
+            descEl.textContent = p.hand_description || (p.is_folded ? '弃牌' : '—');
             row.appendChild(descEl);
 
             // --- 盈亏金额（右侧） ---

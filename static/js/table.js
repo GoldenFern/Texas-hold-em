@@ -103,8 +103,8 @@ const Table = {
 
             // 玩家信息卡片
             let blindBadge = '';
-            if (p.is_small_blind) blindBadge += '<span class="blind-badge sb-badge">SB</span>';
-            if (p.is_big_blind) blindBadge += '<span class="blind-badge bb-badge">BB</span>';
+            if (p.is_small_blind) blindBadge += '<span class="blind-badge sb-badge" title="小盲注">SB</span>';
+            if (p.is_big_blind) blindBadge += '<span class="blind-badge bb-badge" title="大盲注">BB</span>';
 
             let dealerBtn = p.is_dealer ? '<span class="dealer-btn">D</span>' : '';
 
