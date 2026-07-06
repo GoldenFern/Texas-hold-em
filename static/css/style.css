@@ -151,7 +151,7 @@ body {
 .community-card {
     width: var(--card-w-community);
     height: var(--card-h-community);
-    border-radius: 6px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -281,7 +281,7 @@ body {
 .hole-card-mini {
     width: var(--card-w-hole);
     height: var(--card-h-hole);
-    border-radius: 4px;
+    border-radius: 8px;
     overflow: hidden;
     box-shadow: 0 2px 6px rgba(0,0,0,0.4);
     flex-shrink: 0;
@@ -426,6 +426,7 @@ body {
     font-size: 0.75em;
     max-height: 200px;
     overflow-y: auto;
+    padding-right: 8px;
 }
 .htp-row {
     display: flex;
@@ -443,13 +444,13 @@ body {
     flex: 1;
     height: 10px;
     background: rgba(255,255,255,0.06);
-    border-radius: 5px;
+    border-radius: 6px;
     overflow: hidden;
     position: relative;
 }
 .htp-bar-fill {
     height: 100%;
-    border-radius: 5px;
+    border-radius: 6px;
     transition: width 0.4s ease;
     background: var(--blue);
 }
@@ -464,6 +465,7 @@ body {
     font-size: 0.85em;
     font-family: monospace;
     color: var(--text-secondary);
+    margin-right: 4px;
 }
 .htp-pct.htp-pct-positive { color: #2ecc71; }
 .htp-pct.htp-pct-zero     { color: #555; }
@@ -476,6 +478,7 @@ body {
     font-size: 0.75em;
     max-height: 180px;
     overflow-y: auto;
+    padding-right: 8px;
 }
 .rnk-row {
     display: flex;
@@ -483,11 +486,12 @@ body {
     gap: 6px;
 }
 .rnk-label {
-    width: 62px;
+    width: 70px;
     flex-shrink: 0;
     text-align: right;
     font-size: 0.82em;
     color: var(--text-secondary);
+    white-space: nowrap;
 }
 .rnk-row.win-row .rnk-label {
     color: var(--gold-light);
@@ -638,7 +642,7 @@ body {
     padding: 8px;
     margin-bottom: 6px;
     background: rgba(255,255,255,0.04);
-    border-radius: 4px;
+    border-radius: 6px;
     border-left: 2px solid var(--gold);
     cursor: pointer;
 }
@@ -751,7 +755,7 @@ body {
 .result-player-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     padding: 6px 10px;
     border-radius: 6px;
     background: rgba(255,255,255,0.02);
@@ -760,6 +764,7 @@ body {
     background: rgba(212,168,67,0.12);
     border: 1px solid var(--gold);
     box-shadow: 0 0 8px rgba(212,168,67,0.25);
+    padding-right: 20px;
 }
 .result-player-folded {
     opacity: 0.35;
@@ -800,11 +805,12 @@ body {
     display: flex;
     gap: 3px;
     flex-shrink: 0;
+    margin-right: 6px;
 }
 .card-mini {
     width: var(--card-w-mini);
     height: var(--card-h-mini);
-    border-radius: 3px;
+    border-radius: 8px;
     overflow: hidden;
     flex-shrink: 0;
 }
@@ -814,6 +820,16 @@ body {
     max-width: var(--card-w-mini);
     max-height: var(--card-h-mini);
 }
+.card-mini.card-hole-personal {
+    outline: 2px solid var(--gold);
+    outline-offset: -2px;
+    border-radius: 8px;
+}
+.result-player-winner .card-mini.card-hole-personal {
+    outline-color: #ffd700;
+    box-shadow: 0 0 6px rgba(212,168,67,0.5);
+}
+
 .result-pot-line {
     text-align: center;
     font-size: 0.78em;
