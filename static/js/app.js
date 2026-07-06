@@ -2,19 +2,19 @@
  * app.js — 主入口：SocketIO 连接、状态管理、事件路由。
  */
 
-// 机器人风格列表（value: 英文键, label: 中文成语）
+// 机器人风格列表（value: BotStyle enum key, label: 显示名）
 const BOT_STYLES = [
-    { value: 'NIT',    label: 'NIT T=0.03',    temperature: 0.03 },
-    { value: 'TAG',    label: 'TAG T=0.07',    temperature: 0.07 },
-    { value: 'SHARK',  label: 'Shark T=0.15',  temperature: 0.15 },
-    { value: 'LAG',    label: 'LAG T=0.30',    temperature: 0.30 },
-    { value: 'CALLING_STATION', label: 'CS T=0.60',     temperature: 0.60 },
-    { value: 'MANIAC', label: 'MANIAC T=1.20', temperature: 1.20 },
-    { value: 'LLM',    label: 'LLM',            temperature: 0.15 },
+    { value: 'COLD',    label: '极冷 T=0.03',     temperature: 0.03 },
+    { value: 'COOL',    label: '偏冷 T=0.07',     temperature: 0.07 },
+    { value: 'BALANCED', label: '均衡 T=0.15',   temperature: 0.15 },
+    { value: 'WARM',    label: '偏热 T=0.30',     temperature: 0.30 },
+    { value: 'HOT',     label: '炎热 T=0.60',     temperature: 0.60 },
+    { value: 'CHAOS',   label: '混沌 T=1.20',     temperature: 1.20 },
+    { value: 'LLM',     label: 'LLM',             temperature: 0.15 },
 ];
 
 // 默认机器人名字
-const DEFAULT_BOT_NAMES = ['NIT', 'TAG', 'Shark', 'LAG', 'CS', 'MANIAC'];
+const DEFAULT_BOT_NAMES = ['极冷', '偏冷', '均衡', '偏热', '炎热', '混沌'];
 
 const App = {
     socket: null,
