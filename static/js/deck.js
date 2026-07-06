@@ -5,8 +5,7 @@
 /** @type {ReadonlyArray<{id: string, label: string, ext: string, back: string, faceStyle: 'prefix2'|'suffix2'}>} */
 const DECK_SKINS = [
   { id: 'aguilar', label: '经典 PNG', ext: 'png', back: 'back.png', faceStyle: 'prefix2' },
-  { id: 'aguilar_old', label: '矢量 SVG', ext: 'svg', back: 'back.png', faceStyle: 'suffix2' },
-  { id: 'svg_card', label: '矢量 SVG1', ext: 'svg', back: 'back.png', faceStyle: 'suffix2' },
+  { id: 'svg_card', label: '矢量 SVG', ext: 'svg', back: 'back.png', faceStyle: 'suffix2' },
 ];
 
 const DECK_STORAGE_KEY = 'thp_card_deck';
