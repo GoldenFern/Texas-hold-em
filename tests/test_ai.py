@@ -46,22 +46,24 @@ class TestBoltzmannBotFolding:
     """翻牌前弱牌面对加注时的行为。"""
 
     def test_cold_folds_weak_hand(self) -> None:
-        """极冷 Bot（T=0.03 系数）面对加注应弃弱牌。"""
+        """极冷 Bot（T=0.03 系数）面对高额加注应弃弱牌。"""
         game = make_game_with_bot("Cold", seat=0)
         game.start_new_hand()
         bot = BoltzmannBot("Cold", BOT_PROFILES[BotStyle.COLD], seed=42)
         p = game.players[0]
         p.hole_cards = Card.from_str_multi("7c 2d")
+        # 设置高额下注且低筹码，使加注不可用（chips <= to_call）
+        p.chips = 50  # 仅够跟注，无法加注
         game.current_bet = 50
         p.current_bet = 0
-        # Only Fold/Call legal (no CHECK):
+        # 仅 Fold/Call 合法（chips=50 ≤ to_call=50 则无法加注）
         # EV(Fold)=0, EV(Call)=0.25*(15+50)-50=-28.75
         # T=0.03*pot ≈ 0.45 => P(Fold) >> P(Call)
         action = bot.decide(game, p)
         assert action.action_type == ActionType.FOLD
 
     def test_hot_often_calls(self) -> None:
-        """炎热 Bot（T=0.60 系数）面对下注大概率跟注。"""
+        """炎热 Bot（T=0.60 系数）面对下注大概率跟注（无法加注时）。"""
         calls = 0
         for s in range(20):
             game = make_game_with_bot("Hot", seat=0)
@@ -69,6 +71,7 @@ class TestBoltzmannBotFolding:
             bot = BoltzmannBot("Hot", BOT_PROFILES[BotStyle.HOT], seed=s*50)
             p = game.players[0]
             p.hole_cards = Card.from_str_multi("7c 2d")
+            p.chips = 20  # 仅够跟注，排除加注干扰
             p.current_bet = 0
             game.current_bet = 20
             a = bot.decide(game, p)
@@ -122,16 +125,17 @@ class TestBoltzmannBotCheckRule:
             assert action.action_type != ActionType.FOLD
 
     def test_must_call_when_no_check(self) -> None:
-        """不能 Check 时 Fold 仍然可选。"""
+        """不能 Check 时，弱牌应弃牌（极冷 Bot）。"""
         game = make_game_with_bot("Bot", seat=0, num=2)
         game.start_new_hand()
         bot = BoltzmannBot("Bot", BOT_PROFILES[BotStyle.COLD], seed=42)
         p = game.players[0]
         p.hole_cards = Card.from_str_multi("7c 2d")
+        p.chips = 50  # 仅够跟注，无法加注
         p.current_bet = 0
         game.current_bet = 50  # 需要跟注
         action = bot.decide(game, p)
-        # 极冷 Bot 应该弃牌
+        # 极冷 Bot 应该弃掉弱牌
         assert action.action_type == ActionType.FOLD
 
 

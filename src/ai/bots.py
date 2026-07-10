@@ -116,6 +116,11 @@ class BoltzmannBot:
         bet_k_bluff: float = 0.65,
         bet_cap_frac: float = 0.75,
         bet_strategy: str = "separated",
+        # 新模型参数：对手建模
+        F_max: float = 0.75,
+        lambda_fold: float = 2.0,
+        nu: float = 1.0,
+        q_inf_ratio: float = 0.5,
     ) -> None:
         self.name = name
         self.profile = profile
@@ -129,6 +134,11 @@ class BoltzmannBot:
         self.bet_k_bluff = bet_k_bluff
         self.bet_cap_frac = bet_cap_frac
         self.bet_strategy = bet_strategy  # "blended", "value_only", "separated"
+        # 对手建模参数（统计物理启发）
+        self.F_max = F_max              # 最大弃牌率
+        self.lambda_fold = lambda_fold  # fold equity 对下注尺度的敏感度
+        self.nu = nu                    # 对手跟注范围收紧速度
+        self.q_inf_ratio = q_inf_ratio  # q_inf = max(0.05, win_rate * q_inf_ratio)
 
         self.hands_seen: int = 0
 
@@ -194,45 +204,30 @@ class BoltzmannBot:
         if ActionType.CALL in legal and to_call > 0:
             action_evs[ActionType.CALL] = win_rate * (pot + to_call) - to_call
 
-        # Bet / Raise（如果可用）——胜率驱动下注额（含 value + bluff）
+        # Bet / Raise（如果可用）—— 通过 EV 最大化搜索最优下注额
         bet_action = (
             ActionType.BET if ActionType.BET in legal
             else ActionType.RAISE if ActionType.RAISE in legal
             else None
         )
         if bet_action is not None and active_opponents >= 0:
-            cap = self.bet_cap_frac * pot  # 下注上限（pot 的倍数）
-
-            if self.bet_strategy == "value_only":
-                # 纯价值下注：下注额与胜率成正比
-                x = win_rate * self.bet_k_value * pot
-
-            elif self.bet_strategy == "separated":
-                # 分离策略：强牌 value，弱牌 bluff（固定比例）
-                if win_rate > 0.55:
-                    x = win_rate * self.bet_k_value * pot  # 价值下注
-                else:
-                    x = self.bet_k_bluff * pot  # 诈唬下注（固定大小）
-
-            else:  # "blended"（默认/当前策略）
-                x_value = win_rate * self.bet_k_value * pot
-                x_bluff = (1.0 - win_rate) * self.bet_k_bluff * pot * 0.5
-                x = x_value + x_bluff
-
-            x = min(x, cap)  # 上限不超过 cap
-
-            # 确定最小合法下注额
+            # 确定最小/最大合法下注增量（BB 单位）
+            # _ev_bet 公式期望 x = 本轮新增投入（增量），非总下注额
+            player_chips_bb = player.chips / bb
             if bet_action == ActionType.BET:
                 min_r = game_state.big_blind / bb  # 主动下注 = BB
+                max_bet_increment = player_chips_bb
             else:
-                min_r = game_state.get_min_raise_amount(player) / bb  # 加注 = min_raise
+                # RAISE: 增量为 max(min_raise, last_raise)，不含 to_call
+                min_r = max(game_state.min_raise, game_state.last_raise) / bb
+                max_bet_increment = player_chips_bb
 
-            if x >= min_r and min_r <= max_bet:
-                # 下注额合法：上限截断（隐含 all-in），无 all-in 候选人
-                x = min(x, max_bet)
-                ev = self._ev_bet(x, pot, win_rate, active_opponents)
-                action_evs[bet_action] = ev
-                bet_sizes[bet_action] = x
+            if min_r <= max_bet_increment:
+                x_opt, ev_opt = self._find_optimal_bet(
+                    pot, win_rate, active_opponents, min_r, max_bet_increment,
+                )
+                action_evs[bet_action] = ev_opt
+                bet_sizes[bet_action] = x_opt
 
         # Check 存在时移除 Fold（Fold 严格不优于 Check）
         if ActionType.CHECK in legal and ActionType.FOLD in action_evs:
@@ -259,17 +254,88 @@ class BoltzmannBot:
 
     # ---- Bet EV 计算 ----
 
-    def _ev_bet(self, x: float, pot: float, win_rate: float, n_opponents: int) -> float:
-        """计算下注 X BB 的期望收益。
+    def _q_inf(self, win_rate: float) -> float:
+        """根据胜率计算底线胜率 q_inf（被最强范围 call 后的胜率）。
 
-        f(X) = min(0.8, X / (X + 0.5 * pot))
-        每个对手独立以概率 f 弃牌。
+        强牌（w 高）被 call 后仍强 → q_inf 接近 w；
+        弱牌（w 低）被 call 后几乎必输 → q_inf 接近 0。
+        线性插值公式: q_inf = max(0.05, w * (1 - q_inf_ratio) + w^2 * q_inf_ratio)
+        """
+        w = win_rate
+        # 用 q_inf_ratio 控制 w 的二次项权重：0=纯线性，1=纯平方
+        q_inf = w * (1.0 - self.q_inf_ratio) + w * w * self.q_inf_ratio
+        return max(0.05, min(w, q_inf))
+
+    def _ev_bet(self, x: float, pot: float, win_rate: float, n_opponents: int) -> float:
+        """计算下注 x BB 的期望收益（统计物理启发模型）。
+
+        F(x) = F_max * (1 - exp(-lambda_fold * z))
+        q(x) = q_inf + (w - q_inf) * exp(-nu * z)
+        z = x / pot
+
+        多人底池：使用期望跟注人数 n_call = n * (1-F)，近似为
+        EV = Σ P(k callers) * [q * (P + (k+1)*x) - x]
+           ≈ F^n * P + (1-F^n) * [q * (P + (1+E[k|k≥1])*x) - x]
+        其中 E[k|k≥1] ≈ max(1, n*(1-F))（至少一人跟注时）
         """
         if n_opponents <= 0:
-            return win_rate * (pot + 2 * x) - x  # 无人可弃，纯粹价值下注
-        fp = min(0.8, x / (x + 0.5 * pot))
-        all_fold = fp ** n_opponents
-        return all_fold * pot + (1 - all_fold) * (win_rate * (pot + 2 * x) - x)
+            return win_rate * (pot + 2 * x) - x
+        if x <= 0 or pot <= 0:
+            return win_rate * pot
+
+        z = x / pot
+        F = self.F_max * (1.0 - math.exp(-self.lambda_fold * z))
+        fp = max(0.0, min(self.F_max, F))
+        all_fold = fp ** n_opponents if n_opponents > 0 else 0.0
+
+        # 条件胜率
+        if self.nu > 1e-6:
+            q_inf = self._q_inf(win_rate)
+            q = q_inf + (win_rate - q_inf) * math.exp(-self.nu * z)
+        else:
+            q = win_rate
+
+        # 期望跟注人数（至少一人时）
+        exp_callers = max(1.0, n_opponents * (1.0 - fp))
+        ev_called = q * (pot + (1.0 + exp_callers) * x) - x
+        return all_fold * pot + (1.0 - all_fold) * ev_called
+
+    def _find_optimal_bet(
+        self, pot: float, win_rate: float, n_opponents: int,
+        min_bet: float, max_bet: float, n_candidates: int = 15,
+    ) -> tuple[float, float]:
+        """搜索最优下注额 x* = argmax EV_raise(x)。
+
+        在 [min_bet, max_bet] 内搜索最大化 EV 的下注额。
+        候选点包括标准尺度 (1/4P, 1/3P, 1/2P, 2/3P, 3/4P, P, 1.5P, 2P) + all-in。
+        """
+        if min_bet >= max_bet:
+            x_best = max_bet
+            return x_best, self._ev_bet(x_best, pot, win_rate, n_opponents)
+
+        # 候选下注尺度
+        fractions = [0.25, 0.33, 0.50, 0.67, 0.75, 1.0, 1.25, 1.5, 2.0]
+        candidates = []
+        for frac in fractions:
+            x = frac * pot
+            if min_bet <= x <= max_bet:
+                candidates.append(x)
+        # 始终加入边界
+        if min_bet not in candidates:
+            candidates.append(min_bet)
+        if max_bet not in candidates:
+            candidates.append(max_bet)
+
+        # 评估所有候选
+        best_x = min_bet
+        best_ev = float("-inf")
+        for x in sorted(candidates):
+            ev = self._ev_bet(x, pot, win_rate, n_opponents)
+            if ev > best_ev:
+                best_ev = ev
+                best_x = x
+
+        return best_x, best_ev
 
     # ---- Action 构造 ----
 
@@ -360,11 +426,12 @@ class BotFactory:
     @classmethod
     def create_all_styles(cls) -> List[BoltzmannBot]:
         """创建所有 6 种温度的 Boltzmann Bot。"""
+        import zlib
         styles = [
             BotStyle.COLD, BotStyle.COOL, BotStyle.BALANCED,
             BotStyle.WARM, BotStyle.HOT, BotStyle.CHAOS,
         ]
-        return [cls.create(s, seed=hash(s.value) % 10000) for s in styles]
+        return [cls.create(s, seed=zlib.crc32(s.value.encode()) % 10000) for s in styles]
 
     @classmethod
     def list_styles(cls) -> List[BotProfile]:

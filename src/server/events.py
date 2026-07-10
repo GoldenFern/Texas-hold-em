@@ -82,18 +82,20 @@ class GameManager:
                         llm_config.primary.provider = llm_cfg["provider"]
                     if llm_cfg.get("model"):
                         llm_config.primary.model = llm_cfg["model"]
+                    import zlib
                     bot = BotFactory.create_llm(
                         name=bot_name,
                         provider=llm_config.primary.provider,
                         model=llm_config.primary.model,
-                        seed=hash(bot_name) % 10000,
+                        seed=zlib.crc32(bot_name.encode()) % 10000,
                     )
                     # 注入 ContextManager 的 reporter 引用
                     bot.context_manager._sync_opponent_stats(self.reporter)
                 else:
+                    import zlib
                     t = cfg.get("temperature")
                     bot = BotFactory.create(style, name=bot_name,
-                                            seed=hash(bot_name) % 10000,
+                                            seed=zlib.crc32(bot_name.encode()) % 10000,
                                             temperature=t)
                 self.bots[bot_name] = bot
                 players.append(Player(
