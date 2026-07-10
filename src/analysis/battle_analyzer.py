@@ -122,6 +122,9 @@ class BattleAnalyzer:
     ) -> Tuple[Dict[str, float], List[dict]]:
         """执行蒙特卡洛模拟，同时收集牌型概率和排名分布律。
 
+        使用 equity share 处理平局：若 Hero 与 N 个对手平分，
+        Hero 的 equity = 1/(N+1)，不再将平局计为完整获胜。
+
         Returns:
             (hand_type_probs, ranking_distribution)
         """
@@ -131,6 +134,7 @@ class BattleAnalyzer:
         # 初始化计数器
         hand_type_counts = {rank: 0 for rank in HandRank}
         rank_counts: Dict[int, int] = {}  # rank_position -> count
+        equity_sum: float = 0.0  # 累计 equity share（处理平局）
 
         needed = 5 - len(community)
 
@@ -152,14 +156,24 @@ class BattleAnalyzer:
             hero_result = HandEvaluator.evaluate(hole_cards + sim_board)
             hand_type_counts[hero_result.hand_rank] += 1
 
-            # 评估所有对手手牌，确定 Hero 排名
+            # 评估所有对手手牌，确定 Hero 排名和 equity 份额
             hero_score = hero_result.score
-            rank = 1
+            better_count = 0  # 严格强于 Hero 的对手数
+            tied_count = 0     # 与 Hero 平局的对手数（不含自己）
             for opp_hand in opponent_hands:
                 opp_result = HandEvaluator.evaluate(opp_hand + sim_board)
                 if opp_result.score > hero_score:
-                    rank += 1
+                    better_count += 1
+                elif opp_result.score == hero_score:
+                    tied_count += 1
+
+            rank = better_count + 1  # 排名（平局共享此排名）
             rank_counts[rank] = rank_counts.get(rank, 0) + 1
+
+            # equity share：底池按 1/(1 + tied_count) 分配给每位平局者
+            if better_count == 0:
+                equity_sum += 1.0 / (1.0 + tied_count)
+            # else: equity = 0（有对手严格更强）
 
         # 转换为概率
         hand_type_probs = {
@@ -178,6 +192,14 @@ class BattleAnalyzer:
                 "desc": f"第{r}名",
                 "prob": prob,
             })
+
+        # 将平均 equity 存入 ranking_distribution 的第一个条目（供 _calc_odds_ev 使用）
+        avg_equity = equity_sum / num_sims if num_sims > 0 else 0.0
+        ranking_distribution.append({
+            "rank": -1,  # 标记：equity 数据
+            "desc": "equity",
+            "prob": round(avg_equity * 100, 1),
+        })
 
         return hand_type_probs, ranking_distribution
 
@@ -226,43 +248,54 @@ class BattleAnalyzer:
         opponent_count: int,
         ranking_distribution: List[dict],
     ) -> dict:
-        """计算底池赔率、隐含赔率、期望值。
+        """计算底池赔率、期望值。
 
-        胜率直接取自排名分布律的 P(rank=1)。
+        使用 equity share（已处理平局）替代简单的 P(rank=1)。
+        to_call 裁剪到玩家筹码，底池按玩家可争夺的边池过滤。
         """
-        # 胜率 = P(rank=1)
-        win_rate = 0.0
+        # 提取 equity share（由 _run_monte_carlo 存入 ranking_distribution 尾部）
+        equity_share = 0.0
+        win_rate_display = 0.0
         for entry in ranking_distribution:
-            if entry["rank"] == 1:
-                win_rate = entry["prob"] / 100.0
-                break
+            if entry.get("rank") == -1:  # equity 标记
+                equity_share = entry["prob"] / 100.0
+            elif entry.get("rank") == 1:
+                win_rate_display = entry["prob"] / 100.0  # 纯显示用
 
-        to_call = max(0, game.current_bet - player.current_bet)
+        # to_call 裁剪到玩家可承担的筹码
+        to_call = max(0, min(
+            game.current_bet - player.current_bet,
+            player.chips,
+        ))
+
+        # 底池按玩家可争夺的部分过滤（排除无法赢取的边池）
         pot_total = game.pot.total
+        if hasattr(game.pot, 'get_pot_for_player') and game.pot._side_pots:
+            pot_total = game.pot.get_pot_for_player(player.name)
 
         # 底池赔率
         if to_call > 0:
-            pot_after_call = pot_total + to_call
-            pot_odds_ratio = round(pot_after_call / to_call, 2)
-            required_equity = round(to_call / pot_after_call * 100, 1)
+            pot_odds_ratio = round(pot_total / to_call, 2)
+            required_equity = round(to_call / (pot_total + to_call) * 100, 1)
         else:
             pot_odds_ratio = 0.0
             required_equity = 0.0
 
-        # EV / 底池权益
+        # EV / 底池权益（使用 equity share 替代 win_rate）
         if to_call > 0:
-            ev = round(win_rate * pot_total - (1.0 - win_rate) * to_call, 2)
+            ev = round(equity_share * (pot_total + to_call) - to_call, 2)
             ev_judgment = "正期望 [+EV]" if ev >= 0 else "负期望 [-EV]"
             has_call = True
         else:
             # 无需跟注，不存在 EV 决策——显示底池权益（期望份额）
-            equity = round(win_rate * pot_total, 2)
-            ev = equity
+            equity_chips = round(equity_share * pot_total, 2)
+            ev = equity_chips
             ev_judgment = "免跟注 · 底池权益"
             has_call = False
 
         return {
-            "win_rate": round(win_rate * 100, 1),
+            "win_rate": round(win_rate_display * 100, 1),
+            "equity": round(equity_share * 100, 1),
             "pot_odds_ratio": pot_odds_ratio,
             "required_equity": required_equity,
             "ev": ev,

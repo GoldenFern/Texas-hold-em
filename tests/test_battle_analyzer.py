@@ -147,9 +147,11 @@ class TestBattleAnalyzerRankingDistribution:
         )
 
         dist = result["ranking_distribution"]
-        assert len(dist) == 4
-        assert dist[0]["rank"] == 1
-        assert dist[3]["rank"] == 4
+        # ranking_distribution 现在包含排名条目 + 一个 equity 标记条目
+        rank_entries = [d for d in dist if d["rank"] >= 1]
+        assert len(rank_entries) == 4
+        assert rank_entries[0]["rank"] == 1
+        assert rank_entries[3]["rank"] == 4
 
     def test_ranking_prob_sum_around_100(self) -> None:
         analyzer = BattleAnalyzer(preflop_sims=227, postflop_sims=45, seed=42)
@@ -164,7 +166,8 @@ class TestBattleAnalyzerRankingDistribution:
         )
 
         dist = result["ranking_distribution"]
-        total = sum(d["prob"] for d in dist)
+        rank_entries = [d for d in dist if d["rank"] >= 1]
+        total = sum(d["prob"] for d in rank_entries)
         assert abs(total - 100.0) < 2.0, f"sum={total}"
 
     def test_aa_has_higher_win_rate(self) -> None:
@@ -201,7 +204,8 @@ class TestBattleAnalyzerRankingDistribution:
         )
 
         dist = result["ranking_distribution"]
-        assert len(dist) == 2
+        rank_entries = [d for d in dist if d["rank"] >= 1]
+        assert len(rank_entries) == 2
 
 
 class TestBattleAnalyzerOddsEv:
