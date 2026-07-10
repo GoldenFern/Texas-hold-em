@@ -116,11 +116,11 @@ class HandReporter:
 
         # 计算每位玩家本手实际投入的筹码（含盲注、跟注、退款等）
         # 公式:
-        #   spent = 初始筹码 - 终局筹码 + 赢得筹码 - 重购筹码
+        #   spent = 初始筹码 - 终局筹码 + 赢得筹码
         #
-        # 重购发生在 start_new_hand() 中，快照 0 之前。
-        # 快照 0 中 rebuy_count 已包含本局重购。
-        # 与上局末的 rebuy_count 之差即为本局重购次数。
+        # 注意: 快照 0 在 rebuy 之后记录，所以 chips_before 已包含重购筹码。
+        # rebuy 芯片视为玩家的实际投入（用 rebuy_count 追踪），
+        # 因此 spent 会自动反映重购成本，无需额外扣除。
         snapshots = getattr(history, 'step_snapshots', None)
         if snapshots and len(snapshots) >= 2:
             first = snapshots[0]
@@ -137,17 +137,12 @@ class HandReporter:
                 won = history.winners.get(name, 0)
                 spent = chips_before - chips_after + won
 
-                # 扣除本局重购筹码（凭空注入的筹码不算实际投入）
-                curr_rebuy = fp.get('rebuy_count', 0)
-                prev_rebuy = self._prev_rebuy.get(name, 0)
-                rebuy_extra = (curr_rebuy - prev_rebuy) * 1000
-                spent -= rebuy_extra
-
                 if spent > 0:
                     stats.total_spent += spent
                 # 记录本局末 rebuy 状态，供下一局对比
                 last_player = {p['name']: p for p in last.get('players', [])}
-                self._prev_rebuy[name] = last_player.get(name, {}).get('rebuy_count', curr_rebuy)
+                curr_rebuy = last_player.get(name, {}).get('rebuy_count', 0)
+                self._prev_rebuy[name] = curr_rebuy
 
     def get_stats(self, player_name: str) -> Optional[PlayerStats]:
         """获取指定玩家的统计数据。"""

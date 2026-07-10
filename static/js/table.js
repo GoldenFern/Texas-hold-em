@@ -129,7 +129,7 @@ const Table = {
 
             spot.innerHTML = `
                 <div class="player-info ${isHuman ? 'human-player' : ''}">
-                    <div class="player-name">${dealerBtn} ${p.name} ${blindBadge} ${actionMark}</div>
+                    <div class="player-name">${dealerBtn} ${escapeHtml(p.name)} ${blindBadge} ${actionMark}</div>
                     <div class="player-chips">💰 $${p.chips}</div>
                     ${rebuyDisplay}
                     ${betDisplay}

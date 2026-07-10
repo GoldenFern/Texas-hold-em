@@ -39,6 +39,14 @@ class GameManager:
         self._replay_history: List[dict] = []  # 所有已完成手牌的完整回放数据
         self._game_generation: int = 0  # 递增的游戏代际，防竞态
 
+    @staticmethod
+    def _sanitize_name(name: str, max_len: int = 20) -> str:
+        """清理玩家名称：限制长度、剔除 HTML 标签。"""
+        import re
+        name = re.sub(r'<[^>]*>', '', name)  # 移除 HTML 标签
+        name = name.strip()[:max_len]  # 限制长度
+        return name if name else "Player"
+
     def create_game(
         self,
         player_name: str,
@@ -56,6 +64,9 @@ class GameManager:
             self._bot_wake_event.set()
             self._game_generation += 1  # 递增代际，旧循环检测后自动退出
             current_gen = self._game_generation
+
+            # 清理玩家名称（防 XSS）
+            player_name = self._sanitize_name(player_name)
 
             self.human_player_name = player_name
             self.bots.clear()

@@ -138,30 +138,55 @@ def register_routes(app: Flask) -> None:
             return jsonify({"error": "服务器未就绪"}), 500
         return jsonify(mgr.get_replay_list())
 
+    @app.route("/api/game/bots")
+    def game_bots():
+        """获取当前游戏中所有 Bot 的类型信息（调试用）。"""
+        mgr = get_game_manager()
+        if mgr is None or not mgr.bots:
+            return jsonify({"bots": [], "message": "没有活跃的游戏"})
+        from src.llm.llm_bot import LLMBot
+        bots_info = []
+        for name, bot in mgr.bots.items():
+            is_llm = isinstance(bot, LLMBot)
+            info = {
+                "name": name,
+                "type": "LLM" if is_llm else "Rule",
+                "repr": repr(bot),
+            }
+            if is_llm:
+                info["stats"] = bot.decision_stats
+            bots_info.append(info)
+        return jsonify({"bots": bots_info})
+
+    @app.route("/api/game/llm_context")
+    def llm_context():
+        """获取最近一次 LLM 调用的完整上下文（调试面板用）。"""
+        mgr = get_game_manager()
+        if mgr is None:
+            return jsonify({"status": "no_server", "system_prompt": "", "user_prompt": "", "raw_response": ""})
+        ctx = mgr.get_llm_context()
+        if ctx is None:
+            # 没有 LLM 调用记录（尚未调用或没有 LLM Bot）
+            return jsonify({"status": "no_context", "system_prompt": "", "user_prompt": "", "raw_response": ""})
+        ctx["status"] = "ok"
+        return jsonify(ctx)
+
     @app.route("/api/config/llm", methods=["GET"])
     def get_llm_config():
         """获取当前 LLM 配置。"""
         from src.llm.config import load_config, ProviderConfig
         cfg = load_config()
 
-        def _pc(pc: ProviderConfig) -> dict:
-            return {
-                "provider": pc.provider,
-                "model": pc.model,
-                "api_key": "***" if pc.api_key else "",
-                "base_url": pc.base_url,
-                "timeout_seconds": pc.timeout_seconds,
-                "temperature": pc.temperature,
-                "max_tokens": pc.max_tokens,
-            }
-
         return jsonify({
-            "primary": _pc(cfg.primary),
-            "fallbacks": [_pc(fb) for fb in cfg.fallbacks],
-            "call_frequency": cfg.call_frequency,
-            "min_llm_decisions_per_hand": cfg.min_llm_decisions_per_hand,
-            "context_window_hands": cfg.context_window_hands,
-            "enable_prompt_caching": cfg.enable_prompt_caching,
+            "primary": {
+                "provider": cfg.primary.provider,
+                "model": cfg.primary.model,
+                "api_key": "***" if cfg.primary.api_key else "",
+                "base_url": cfg.primary.base_url,
+                "timeout_seconds": cfg.primary.timeout_seconds,
+                "temperature": cfg.primary.temperature,
+                "reasoning_effort": cfg.primary.reasoning_effort or "disabled",
+            },
             "enable_commentary": cfg.enable_commentary,
             "enable_advisor": cfg.enable_advisor,
         })
@@ -169,39 +194,30 @@ def register_routes(app: Flask) -> None:
     @app.route("/api/config/llm", methods=["POST"])
     def set_llm_config():
         """保存 LLM 配置。"""
-        from src.llm.config import LLMConfig, ProviderConfig, save_config
+        from src.llm.config import LLMConfig, ProviderConfig, save_config, load_config
         data = request.get_json() or {}
 
         primary_data = data.get("primary", {})
         raw_key = primary_data.get("api_key", "")
-        # "***" 表示未修改，不覆盖已有 Key
-        actual_key = "" if raw_key == "***" else raw_key
+        # 保护：掩码值 "***" 表示前端未修改密钥，保留已有值
+        if raw_key == "***" or raw_key == "":
+            existing = load_config()
+            actual_key = existing.primary.api_key  # 保留现有密钥
+        else:
+            actual_key = raw_key
         primary = ProviderConfig(
-            provider=primary_data.get("provider", "anthropic"),
-            model=primary_data.get("model", "claude-sonnet-4-20250514"),
+            provider=primary_data.get("provider", "deepseek"),
+            model=primary_data.get("model", "deepseek-v4-pro"),
             api_key=actual_key,
             base_url=primary_data.get("base_url", ""),
-            timeout_seconds=float(primary_data.get("timeout_seconds", 15.0)),
-            temperature=float(primary_data.get("temperature", 0.1)),
-            max_tokens=int(primary_data.get("max_tokens", 200)),
+            timeout_seconds=float(primary_data.get("timeout_seconds", 60.0)),
+            temperature=float(primary_data.get("temperature", 0.5)),
+            max_tokens=100000,
+            reasoning_effort=primary_data.get("reasoning_effort", ""),
         )
-
-        fallbacks = []
-        for fb_data in data.get("fallbacks", []):
-            fallbacks.append(ProviderConfig(
-                provider=fb_data.get("provider", "anthropic"),
-                model=fb_data.get("model", ""),
-                timeout_seconds=float(fb_data.get("timeout_seconds", 10.0)),
-                base_url=fb_data.get("base_url", ""),
-            ))
 
         cfg = LLMConfig(
             primary=primary,
-            fallbacks=fallbacks,
-            call_frequency=data.get("call_frequency", "every"),
-            min_llm_decisions_per_hand=int(data.get("min_llm_decisions_per_hand", 1)),
-            context_window_hands=int(data.get("context_window_hands", 5)),
-            enable_prompt_caching=bool(data.get("enable_prompt_caching", True)),
             enable_commentary=bool(data.get("enable_commentary", False)),
             enable_advisor=bool(data.get("enable_advisor", False)),
         )

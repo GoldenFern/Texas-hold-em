@@ -14,9 +14,11 @@ import sys
 
 def run_server(host: str = "0.0.0.0", port: int = 5000, debug: bool = False) -> None:
     """启动 Flask + SocketIO Web 服务器。"""
-    from src.llm.client import configure_llm_traffic_logging
-
-    configure_llm_traffic_logging(enabled=True)
+    try:
+        from src.llm.langchain_client import configure_llm_traffic_logging
+        configure_llm_traffic_logging(enabled=True)
+    except ImportError:
+        pass  # LLM 依赖为可选，无 LLM Bot 时跳过
     from src.server.app import create_app
 
     app = create_app()
@@ -33,9 +35,11 @@ def run_server(host: str = "0.0.0.0", port: int = 5000, debug: bool = False) -> 
 
 def run_cli(num_hands: int = 10) -> None:
     """命令行模式：AI 机器人自动对战 N 手牌。"""
-    from src.llm.client import configure_llm_traffic_logging
-
-    configure_llm_traffic_logging(enabled=True)
+    try:
+        from src.llm.langchain_client import configure_llm_traffic_logging
+        configure_llm_traffic_logging(enabled=True)
+    except ImportError:
+        pass  # LLM 依赖为可选
     from src.engine.game import Action, ActionType, GameState
     from src.engine.player import Player
     from src.ai.bots import BotFactory, BotStyle

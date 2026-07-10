@@ -185,7 +185,7 @@ class TestHandReporterWithSnapshots:
         assert reporter.player_stats["A"].total_spent == 0
 
     def test_spent_excludes_rebuy_chips(self) -> None:
-        """重购筹码不应计为实际投入。"""
+        """重购筹码视为玩家的实际投入（快照 0 在 rebuy 之后）。"""
         reporter = HandReporter()
         # A 本局用了重购，B 正常
         snapshots = [
@@ -206,8 +206,8 @@ class TestHandReporterWithSnapshots:
             hand_id=1, players=["A", "B"], winners={"B": 50}, snapshots=snapshots
         )
         reporter.record_hand(h)
-        # A: chips 1000->0, won 0, rebuy=1000 => spent = 0
-        assert reporter.player_stats["A"].total_spent == 0
+        # A: chips 1000->0, won 0 => spent = 1000（重购为实际投入）
+        assert reporter.player_stats["A"].total_spent == 1000
         # B: chips 1000->1020, won 50 => spent = 1000-1020+50 = 30
         assert reporter.player_stats["B"].total_spent == 30
 
@@ -238,7 +238,7 @@ class TestHandReporterWithSnapshots:
         assert sum(profits) == 0, f"profit sum = {sum(profits)}"
 
     def test_profit_sums_to_zero_with_rebuy(self) -> None:
-        """有重购时，total_spent 不计入重购筹码，profit 正确反映实际盈亏。"""
+        """有重购时，重购筹码计为实际投入，profit 保持零和。"""
         reporter = HandReporter()
         # A 重购了 1000 筹码，最终全输光；B 输了 50；C 赢了 1100
         snapshots = [
@@ -265,14 +265,18 @@ class TestHandReporterWithSnapshots:
         a = reporter.player_stats["A"]
         b = reporter.player_stats["B"]
         c = reporter.player_stats["C"]
-        # A 的 spent 不是 1000（那 1000 来自重购）
-        assert a.total_spent == 0
+        # A: chips 1000→0, won 0, spent=1000（重购为实际投入）
+        assert a.total_spent == 1000
+        assert a.profit == -1000  # 净亏损
         # B 输了 50
         assert b.total_spent == 50
         assert b.profit == -50
-        # C 投了 50，赢了 1100
+        # C: chips 1000→2050, won 1100, spent=50
         assert c.total_spent == 50
         assert c.profit == 1050
+        # 零和验证：-1000 + (-50) + 1050 = 0
+        profits = [a.profit, b.profit, c.profit]
+        assert sum(profits) == 0, f"profit sum = {sum(profits)}"
 
 
 class TestHandReporterQuery:

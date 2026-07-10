@@ -2,6 +2,13 @@
  * app.js — 主入口：SocketIO 连接、状态管理、事件路由。
  */
 
+/** HTML 转义：防止 XSS 注入 */
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+}
+
 // 机器人风格列表（value: BotStyle enum key, label: 显示名）
 const BOT_STYLES = [
     { value: 'COLD',    label: '极冷 T=0.03',     temperature: 0.03 },
@@ -102,6 +109,7 @@ const App = {
             Controls.update(state);
             UI.updateAnalysis(state);
             UI.updateStats();
+            ContextDebug.fetchAndRender();  // 刷新 LLM Context 调试面板
 
             // 更新手牌计数器（两处：header 和 toolbar）
             const handText = `手牌 #${state.hand_id}`;
@@ -116,7 +124,11 @@ const App = {
         });
 
         this.socket.on('hand_completed', (data) => {
-            if (this._replayActive) return;  // 回放模式下不弹出结果面板
+            if (this._replayActive) {
+                // 回放期间收到 hand_completed：暂存，退出回放后展示
+                this._pendingHandCompleted = data;
+                return;
+            }
             Controls.showHandResult(data);
             UI.showCardResult(data);
         });
@@ -345,6 +357,12 @@ const App = {
             }
         } catch (e) {
             console.error('恢复牌桌失败:', e);
+        }
+        // 若回放期间收到 hand_completed，退出回放后展示
+        if (this._pendingHandCompleted) {
+            Controls.showHandResult(this._pendingHandCompleted);
+            UI.showCardResult(this._pendingHandCompleted);
+            this._pendingHandCompleted = null;
         }
     },
 
