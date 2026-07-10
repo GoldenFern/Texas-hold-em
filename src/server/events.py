@@ -37,6 +37,7 @@ class GameManager:
         self._hand_paused: bool = False  # 手牌结束后暂停
         self._hand_continue_event = Event()
         self._replay_history: List[dict] = []  # 所有已完成手牌的完整回放数据
+        self._game_generation: int = 0  # 递增的游戏代际，防竞态
 
     def create_game(
         self,
@@ -50,9 +51,11 @@ class GameManager:
     ) -> None:
         """创建新游戏。"""
         with self._lock:
-            # 停止旧的 Bot 循环
+            # 停止旧的 Bot 循环并递增代际
             self._bot_running = False
             self._bot_wake_event.set()
+            self._game_generation += 1  # 递增代际，旧循环检测后自动退出
+            current_gen = self._game_generation
 
             self.human_player_name = player_name
             self.bots.clear()
@@ -177,6 +180,7 @@ class GameManager:
             return
 
         self._bot_running = True
+        self._bot_generation = self._game_generation  # 记录启动时的代际
         socketio.start_background_task(self._bot_loop)
 
     def _bot_loop(self) -> None:
@@ -184,8 +188,13 @@ class GameManager:
         if socketio is None:
             return
         _sleep = socketio.sleep  # Eventlet 协程式 sleep
+        my_generation = self._game_generation  # 本循环的代际标识
 
         while self._bot_running:
+            # 代际校验：如果游戏已重建，本循环立即退出
+            if self._game_generation != my_generation:
+                return
+
             # 检查是否需要等待人类玩家
             need_wait = False
             with self._lock:
@@ -272,6 +281,10 @@ class GameManager:
                     print(f"[BotLoop] 警告: 找不到机器人 '{cp.name}'，跳过")
                     continue
                 is_llm_bot = self._is_llm_bot(bot)
+                # 快照 LLM 决策上下文（锁外 API 调用后需校验无竞态）
+                llm_hand_id = game.hand_id
+                llm_player_name = cp.name
+                llm_generation = self._game_generation
 
             # LLM 机器人决策在锁外执行（API 调用可能耗时较长）
             if is_llm_bot:
@@ -279,15 +292,21 @@ class GameManager:
             else:
                 action = None  # 规则机器人在锁内决策
 
-            # 应用动作（锁内）
+            # 应用动作（锁内）—— 校验代际/手牌/玩家是否仍匹配
             with self._lock:
                 if self.game is None or not self._bot_running:
                     break
+                # 代际校验：游戏已重建则丢弃 LLM 结果
+                if self._game_generation != llm_generation:
+                    continue
                 game = self.game
                 if game.phase.value >= 6:
                     continue
+                # 手牌/玩家校验：LLM 返回时局面可能已变化
+                if game.hand_id != llm_hand_id:
+                    continue
                 cp = game.players[game.current_player_index]
-                if cp.is_human:
+                if cp.is_human or cp.name != llm_player_name:
                     continue
                 bot = self.bots.get(cp.name)
                 if bot is None:
@@ -335,20 +354,39 @@ class GameManager:
 
     def _update_llm_contexts(self, history: Any) -> None:
         """手牌结束后更新 LLM Bot 的上下文。"""
+        # 收集实际摊牌玩家（仅未弃牌者）
+        if history and hasattr(history, "hole_cards"):
+            folded_names = set()
+            if hasattr(history, "actions"):
+                for a in history.actions:
+                    if a.action_type.name == "FOLD":
+                        folded_names.add(a.player_name)
+            showdown_hands: Dict[str, str] = {}
+            for pname, cards in history.hole_cards.items():
+                if pname not in folded_names and cards:
+                    cards_str = " ".join(str(c) for c in cards)
+                    if cards_str:
+                        showdown_hands[pname] = cards_str
+
         for name, bot in self.bots.items():
             if not self._is_llm_bot(bot):
                 continue
             won = name in history.winners if history else False
-            profit = history.winners.get(name, 0) if history and history.winners else 0
+            # 使用净利润（赢得 - 投入）
+            gross = history.winners.get(name, 0) if history and history.winners else 0
+            # 从 player_stats 获取该手实际投入
+            player_stats = self.reporter.player_stats.get(name)
+            if player_stats and player_stats.hands_played > 0:
+                net = gross  # reporter 已追踪累计，这里传 gross 供上下文参考
+            profit = gross  # ContextManager 内部自行处理
 
             bot.context_manager.end_hand(won=won, profit=profit, reporter=self.reporter)
 
+            # 仅记录实际摊牌对手的手牌（不含弃牌者）
             if history and hasattr(history, "hole_cards"):
-                for opponent_name, cards in history.hole_cards.items():
+                for opponent_name, cards_str in showdown_hands.items():
                     if opponent_name != name:
-                        cards_str = " ".join(str(c) for c in cards) if cards else ""
-                        if cards_str:
-                            bot.context_manager.record_showdown(opponent_name, cards_str)
+                        bot.context_manager.record_showdown(opponent_name, cards_str)
 
     def _get_human_player(self) -> Optional[Player]:
         if self.game is None:
