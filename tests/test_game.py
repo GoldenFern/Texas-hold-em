@@ -187,12 +187,16 @@ class TestActions:
 
     def test_legal_actions_after_all_call(self) -> None:
         game = self._setup_game()
-        # 所有人跟注到翻牌
-        for _ in range(3):
+        # 所有人跟注或过牌到翻牌
+        for _ in range(6):
             if game.phase == GamePhase.FLOP:
                 break
             p = game.players[game.current_player_index]
-            game.apply_action(Action(p.name, ActionType.CALL))
+            to_call = game.current_bet - p.current_bet
+            if to_call > 0:
+                game.apply_action(Action(p.name, ActionType.CALL))
+            else:
+                game.apply_action(Action(p.name, ActionType.CHECK))
 
         if game.phase == GamePhase.FLOP:
             first = game.players[game.current_player_index]
@@ -232,12 +236,16 @@ class TestGameFlow:
         game = GameState(players)
         game.start_new_hand()
 
-        # 翻牌前：所有人跟注
-        for _ in range(3):
+        # 翻牌前：所有人跟注 / 过牌
+        for _ in range(6):
             if game.phase != GamePhase.PRE_FLOP:
                 break
             p = game.players[game.current_player_index]
-            game.apply_action(Action(p.name, ActionType.CALL))
+            to_call = game.current_bet - p.current_bet
+            if to_call > 0:
+                game.apply_action(Action(p.name, ActionType.CALL))
+            else:
+                game.apply_action(Action(p.name, ActionType.CHECK))
 
         # 翻牌：所有人 check
         if game.phase == GamePhase.FLOP:
@@ -273,12 +281,16 @@ class TestGameFlow:
         game = GameState(players)
         game.start_new_hand()
 
-        # 翻牌前：大盲位选择跟注或加注
-        for _ in range(2):
+        # 翻牌前：庄家/小盲跟注，大盲过牌
+        for _ in range(4):
             if game.phase != GamePhase.PRE_FLOP:
                 break
             p = game.players[game.current_player_index]
-            game.apply_action(Action(p.name, ActionType.CALL))
+            to_call = game.current_bet - p.current_bet
+            if to_call > 0:
+                game.apply_action(Action(p.name, ActionType.CALL))
+            else:
+                game.apply_action(Action(p.name, ActionType.CHECK))
 
         # 翻牌 → 转牌 → 河牌: 全部 check
         for _ in range(6):  # 最多 3 轮 × 2 人
@@ -624,12 +636,15 @@ class TestDeadMoneySidePotResolution:
         if game.phase < GamePhase.RIVER and not players[3].is_folded:
             # 确保 C 可以行动
             for _ in range(5):
+                if game.phase >= GamePhase.FINISHED:
+                    break
                 cp = game.players[game.current_player_index]
                 if cp.status != PlayerStatus.ACTIVE:
                     game.current_player_index = game._get_next_active_player(game.current_player_index)
                     continue
                 if cp.name == "C":
-                    game.apply_action(Action("C", ActionType.BET, amount=100))
+                    bet_action = ActionType.BET if game.current_bet == 0 else ActionType.RAISE
+                    game.apply_action(Action("C", bet_action, amount=100))
                 elif cp.name == "D":
                     game.apply_action(Action("D", ActionType.FOLD))
                 else:

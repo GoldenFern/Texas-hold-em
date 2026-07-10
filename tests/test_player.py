@@ -159,7 +159,7 @@ class TestWinPot:
         p.win_pot(200)
         assert p.chips == 700
         assert p.total_won == 200
-        assert p.hands_won == 1
+        # hands_won 由游戏引擎管理，不再由 win_pot 自动递增
 
     def test_win_pot_accumulates(self) -> None:
         p = Player(name="Hero", chips=500, seat=0)
@@ -167,7 +167,7 @@ class TestWinPot:
         p.win_pot(150)
         assert p.chips == 750
         assert p.total_won == 250
-        assert p.hands_won == 2
+        # hands_won 由游戏引擎管理，不再由 win_pot 自动递增
 
 
 class TestRebuy:

@@ -154,10 +154,9 @@ class Player:
         return amount
 
     def win_pot(self, amount: int) -> None:
-        """赢得底池。"""
+        """赢得底池（金额）。hands_won 由引擎统一管理以防多池重复计数。"""
         self.chips += amount
         self.total_won += amount
-        self.hands_won += 1
 
     def rebuy(self, amount: int = 1000) -> bool:
         """重购筹码（本金输光时借款重新入场）。

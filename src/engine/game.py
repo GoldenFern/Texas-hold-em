@@ -205,6 +205,8 @@ class GameState:
                 p.chips -= actual
                 p.total_bet += actual
                 self.pot.add_bet(p, actual)
+                if p.chips == 0:
+                    p.status = PlayerStatus.ALL_IN
 
     def _post_blinds(self) -> None:
         """收取小盲和大盲。单挑时庄家（Button）同时也是小盲。"""
@@ -230,9 +232,9 @@ class GameState:
         self.current_bet = self.big_blind
 
     def _deal_hole_cards(self) -> None:
-        """给每位活跃玩家发两张底牌。"""
+        """给每位未弃牌/未淘汰的玩家发两张底牌。"""
         for p in self.players:
-            if p.chips > 0:
+            if p.status not in (PlayerStatus.FOLDED, PlayerStatus.OUT):
                 p.hole_cards = self.deck.deal(2)
 
     def _get_first_to_act(self) -> int:
@@ -337,7 +339,10 @@ class GameState:
         self._emit("hand_finished", history)
 
     def _calculate_side_pots(self) -> None:
-        """计算主池和边池（仅在存在全下玩家时创建边池）。"""
+        """计算主池和边池（仅在存在全下玩家时创建边池）。
+
+        标准规则：无人匹配的 excess 筹码退回给贡献者，不产生单人边池。
+        """
         all_bettors = [p for p in self.players if p.total_bet > 0]
         active = [p for p in self.players if not p.is_folded]
 
@@ -360,6 +365,7 @@ class GameState:
         processed: Set[str] = set()
         self.pot._side_pots = []
         self.pot._main_pot = 0
+        total_refund = 0
 
         for player in sorted_by_bet:
             level = player.total_bet
@@ -377,19 +383,29 @@ class GameState:
                     if not p.is_folded and p.name not in processed:
                         eligible.add(p.name)
 
-            side = self.pot._side_pots
-            from src.engine.pot import SidePot
-            if prev_level == 0:
-                self.pot._main_pot = pot_amount
+            # 单人边池 → 退回未被匹配的筹码，不创建底池
+            if len(eligible) <= 1:
+                sole_name = next(iter(eligible)) if eligible else player.name
+                sole_player = self._find_player(sole_name)
+                if sole_player:
+                    sole_player.chips += pot_amount
+                    sole_player.total_bet -= pot_amount
+                total_refund += pot_amount
             else:
-                side.append(SidePot(amount=pot_amount, eligible_players=eligible, level=level))
+                from src.engine.pot import SidePot
+                if prev_level == 0:
+                    self.pot._main_pot = pot_amount
+                else:
+                    self.pot._side_pots.append(
+                        SidePot(amount=pot_amount, eligible_players=eligible, level=level)
+                    )
 
             prev_level = level
             for p in all_bettors:
                 if p.total_bet <= level:
                     processed.add(p.name)
 
-        # 同步 _total 以保持一致性
+        # 同步 _total（扣除已退回的筹码）
         self.pot._total = self.pot._main_pot + sum(
             sp.amount for sp in self.pot._side_pots
         )
@@ -399,7 +415,7 @@ class GameState:
         active_players: List[Player],
         hand_results: Dict[str, HandResult],
     ) -> None:
-        """按边池层级分配筹码给赢家。"""
+        """按边池层级分配筹码给赢家。hands_won 每手牌只递增一次。"""
         self.winners = {}
         self.winning_hands = {}
 
@@ -417,6 +433,12 @@ class GameState:
                 if p.name in sp.eligible_players
             ]
             self._distribute_one_pot(sp.amount, eligible, hand_results)
+
+        # 每位赢家的 hands_won 只递增一次（每手牌，非每池）
+        for name in self.winners:
+            p = self._find_player(name)
+            if p:
+                p.hands_won += 1
 
     def _distribute_one_pot(
         self,
@@ -470,19 +492,17 @@ class GameState:
                 legal.append(ActionType.RAISE)
         else:
             legal.append(ActionType.CALL)
-            # 不完整加注规则：如果玩家本轮已行动过且最后加注不完整，无权再加注
-            if self._last_raise_was_incomplete:
-                has_acted = any(
-                    a.player_name == player.name for a in self.actions_this_round
-                )
-                if not has_acted:
+            # 只有筹码超过跟注额时才允许加注（否则只能全下跟注）
+            if player.chips > to_call:
+                # 不完整加注规则：如果玩家本轮已行动过且最后加注不完整，无权再加注
+                if self._last_raise_was_incomplete:
+                    has_acted = any(
+                        a.player_name == player.name for a in self.actions_this_round
+                    )
+                    if not has_acted:
+                        legal.append(ActionType.RAISE)
+                else:
                     legal.append(ActionType.RAISE)
-            else:
-                legal.append(ActionType.RAISE)
-
-        # 全下始终可选
-        if ActionType.RAISE in legal and player.chips > to_call:
-            pass  # raise 已添加
 
         return legal
 
@@ -508,20 +528,88 @@ class GameState:
     def get_min_raise_amount(self, player: Player) -> int:
         """获取最小加注额。"""
         if self.current_bet == 0:
+            # 首轮下注：固定限注在 Turn/River 使用大注
+            if self.betting_structure == BettingStructure.FIXED_LIMIT:
+                if self.phase >= GamePhase.TURN:
+                    return self.big_blind * 2
             return self.big_blind
         to_call = self.current_bet - player.current_bet
         min_total = self.current_bet + max(self.min_raise, self.last_raise)
         return min(min_total, player.chips + player.current_bet)
 
     def apply_action(self, action: Action) -> bool:
-        """应用玩家的动作。
+        """应用玩家的动作。引擎层作为最终权威校验合法性。
 
         Returns:
             True 如果该轮下注结束（进入下一阶段或摊牌）。
+
+        Raises:
+            ValueError: 动作非法（非当前玩家回合、无效动作、金额不合法等）。
         """
         player = self._find_player(action.player_name)
         if player is None:
             raise ValueError(f"找不到玩家: {action.player_name}")
+
+        # ---- 合法性校验（引擎层最终权威） ----
+
+        # 0. 游戏必须处于可行动阶段
+        if self.phase.value >= GamePhase.SHOWDOWN.value:
+            raise ValueError(
+                f"游戏已结束（阶段: {self.phase.name}），无法执行动作"
+            )
+
+        # 1. 必须轮到该玩家
+        current_player = self.players[self.current_player_index]
+        if player.name != current_player.name:
+            raise ValueError(
+                f"不是 {player.name} 的回合（当前: {current_player.name}）"
+            )
+
+        # 2. 玩家必须处于 ACTIVE 状态
+        if player.status != PlayerStatus.ACTIVE:
+            raise ValueError(
+                f"{player.name} 无法行动（状态: {player.status.name}）"
+            )
+
+        # 3. 动作类型必须在合法列表中
+        legal = self.get_legal_actions(player)
+        if action.action_type not in legal:
+            raise ValueError(
+                f"非法动作 {action.action_type.name}，"
+                f"合法: {[a.name for a in legal]}"
+            )
+
+        to_call = self.current_bet - player.current_bet
+
+        # 4. 金额合法性校验
+        if action.action_type in (ActionType.BET, ActionType.RAISE):
+            amount = action.amount
+            # 金额不能低于玩家已有下注（防止"降注"攻击）
+            if amount < player.current_bet:
+                raise ValueError(
+                    f"下注额 ({amount}) 不能低于已有下注 ({player.current_bet})"
+                )
+            # 金额不能低于最小加注（除非全下）
+            min_allowed = self.get_min_raise_amount(player)
+            is_all_in_bet = amount >= player.chips + player.current_bet
+            if amount < min_allowed and not is_all_in_bet:
+                raise ValueError(
+                    f"加注额 ({amount}) 低于最低加注 ({min_allowed})"
+                )
+            # 金额不能超过最大限额
+            max_allowed = self.get_max_bet(player)
+            if amount > max_allowed:
+                raise ValueError(
+                    f"下注额 ({amount}) 超过最大限额 ({max_allowed})"
+                )
+        elif action.action_type == ActionType.CHECK:
+            if to_call > 0:
+                raise ValueError(f"需要跟注 {to_call}，不能过牌")
+        elif action.action_type == ActionType.CALL:
+            if to_call <= 0:
+                raise ValueError("无需跟注，应使用 CHECK")
+
+        # ---- 执行动作 ----
 
         self.all_actions.append(action)
         self.actions_this_round.append(action)
@@ -541,7 +629,6 @@ class GameState:
             player.check()
 
         elif action.action_type == ActionType.CALL:
-            to_call = self.current_bet - player.current_bet
             added = player.call(self.current_bet)
             self.pot.add_bet(player, added)
             if player.is_all_in:
@@ -549,6 +636,7 @@ class GameState:
 
         elif action.action_type in (ActionType.BET, ActionType.RAISE):
             amount = action.amount
+            # amount 已经过校验，确保 >= player.current_bet
             added = amount - player.current_bet
 
             if added >= player.chips:
@@ -566,16 +654,25 @@ class GameState:
                 player.status = PlayerStatus.ALL_IN
                 action.is_all_in = True
 
-            raise_amount = amount - self.current_bet
-            # 不完整加注判断：加注增量 < 当前最小加注额 且 当前已有下注
-            if self.current_bet > 0 and raise_amount < self.min_raise:
-                self._last_raise_was_incomplete = True
+            # ---- 更新下注轮状态 ----
+            if amount > self.current_bet:
+                raise_amount = amount - self.current_bet
+                if self.current_bet > 0 and raise_amount < self.min_raise:
+                    # 不完整加注（短码 all-in）：不更新 last_raise/min_raise
+                    self._last_raise_was_incomplete = True
+                    self.current_bet = amount
+                else:
+                    # 完整加注
+                    self._last_raise_was_incomplete = False
+                    self.last_raise = raise_amount
+                    self.min_raise = max(self.last_raise, self.big_blind)
+                    self.current_bet = amount
             else:
-                self._last_raise_was_incomplete = False
+                # amount <= current_bet：短码全下，未达到当前下注
+                if self.current_bet > 0:
+                    self._last_raise_was_incomplete = True
+                # current_bet / last_raise / min_raise 保持不变
 
-            self.last_raise = raise_amount
-            self.min_raise = max(self.last_raise, self.big_blind)
-            self.current_bet = amount
             self._emit("bet_raised", player.name, amount)
 
         elif action.action_type == ActionType.ALL_IN:
@@ -589,10 +686,24 @@ class GameState:
             action.amount = amount
             action.is_all_in = True
 
+            # ---- 更新下注轮状态（含不完整加注判断） ----
             if amount > self.current_bet:
-                self.last_raise = amount - self.current_bet
-                self.min_raise = max(self.last_raise, self.big_blind)
-                self.current_bet = amount
+                raise_amount = amount - self.current_bet
+                if self.current_bet > 0 and raise_amount < self.min_raise:
+                    # 不完整加注 all-in
+                    self._last_raise_was_incomplete = True
+                    self.current_bet = amount
+                else:
+                    # 完整加注 all-in
+                    self._last_raise_was_incomplete = False
+                    self.last_raise = raise_amount
+                    self.min_raise = max(self.last_raise, self.big_blind)
+                    self.current_bet = amount
+            else:
+                # amount <= current_bet：短码 all-in，未达到当前下注
+                if self.current_bet > 0:
+                    self._last_raise_was_incomplete = True
+                # current_bet / last_raise / min_raise 保持不变
 
         self._emit("player_action", action)
 
@@ -627,10 +738,18 @@ class GameState:
                     self.advance_phase()
                 self._showdown()
                 return
+            # 只有一位可行动玩家，其余已全下：无人可匹配新下注，直接 runout
+            if len(active) == 1 and len(all_in_players) > 0:
+                while self.phase != GamePhase.RIVER:
+                    self.advance_phase()
+                self._showdown()
+                return
             self.advance_phase()
 
     def _handle_last_player_wins(self) -> None:
         """当只剩一名玩家未弃牌时，该玩家赢得底池。"""
+        self.winners = {}
+        self.winning_hands = {}
         winner = next(
             (p for p in self.players if not p.is_folded),
             None,
@@ -649,8 +768,10 @@ class GameState:
             winner.chips += refund
             winner.total_bet -= refund
             total_pot -= refund
+            self.pot._total = total_pot  # 同步 pot._total
 
         winner.win_pot(total_pot)
+        winner.hands_won += 1
         self.winners[winner.name] = total_pot
 
         # 记录终局快照（退款和底池分配后）
