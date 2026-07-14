@@ -214,39 +214,33 @@ class TestCalculatePotOdds:
 class TestPositionValue:
     """位置价值评估。"""
 
-    def test_dealer_is_zero(self) -> None:
-        """非庄位与庄位的距离：庄位本身 offset=0 → pos_val = 1-0 = 1.0。"""
-        # dealer_seat=5, player_seat=5, num_players=6
-        # relative_pos = (5-5) % 6 = 0 → value = 0.0
-        # 等等，代码中 relative_pos=0 时返回 0.0
+    def test_dealer_is_best(self) -> None:
+        """BTN 是最佳位置，应返回 1.0。"""
         val = st.position_value(5, 5, 6)
-        assert val == 0.0
+        assert val == 1.0, f"BTN should be 1.0, got {val}"
 
-    def test_button_position_best(self) -> None:
-        """离庄位最近的非庄位玩家 position_value 较高。"""
-        # dealer=5, player at seat 0: relative_pos=(0-5)%6=1, value=1-1/6=0.83
-        val_close = st.position_value(0, 5, 6)
-        # dealer=5, player at seat 2: relative_pos=(2-5)%6=3, value=1-3/6=0.5
-        val_far = st.position_value(2, 5, 6)
-        # 更靠近庄位的玩家应有更高的 position_value
-        assert val_close > val_far
+    def test_co_better_than_utg(self) -> None:
+        """翻牌后越晚行动位置越好：CO (seat 4) > UTG (seat 0)。"""
+        val_co = st.position_value(4, 5, 6)    # CO: relative_pos=5 → 1.0
+        val_utg = st.position_value(0, 5, 6)   # UTG: relative_pos=1 → 0.0
+        assert val_co > val_utg, f"CO({val_co}) should be better than UTG({val_utg})"
 
     def test_under_the_gun_worst(self) -> None:
-        """UTG 位置最差。"""
-        # 3 人桌: dealer=0, UTG=1
-        # relative_pos = (1-0) % 3 = 1 → pos_val = 1/3 ≈ 0.33 → 1-0.33 = 0.67
-        utg_val = st.position_value(1, 0, 3)
-        # dealer=0, 位置1: (1-0)%3=1→0.67
-        # dealer=0, 位置2: (2-0)%3=2→0.33
-        btn_val = st.position_value(2, 0, 3)  # 最接近庄位
-        # 在 3 人桌，位置 2 (BTN之后1位) 比 位置1 (UTG，BTN之后2位) 更好
-        assert btn_val < utg_val, f"btn={btn_val}, utg={utg_val}"
+        """UTG 位置最差（0.0）。"""
+        utg_val = st.position_value(1, 0, 6)
+        assert utg_val == 0.0, f"UTG should be 0.0, got {utg_val}"
+
+        co_val = st.position_value(5, 0, 6)    # CO: relative_pos=5 → 1.0
+        btn_val = st.position_value(0, 0, 6)    # BTN: relative_pos=0 → 1.0
+        assert btn_val == 1.0
+        assert co_val == 1.0
+        assert btn_val >= co_val >= utg_val
 
     def test_value_in_range(self) -> None:
         """位置价值应在 0.0–1.0 范围内。"""
         for seat in range(6):
             val = st.position_value(seat, 0, 6)
-            assert 0.0 <= val <= 1.0
+            assert 0.0 <= val <= 1.0, f"seat {seat} value {val} out of range"
 
 
 # ============================================================

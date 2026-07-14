@@ -48,11 +48,11 @@ def register_routes(app: Flask) -> None:
         data = request.get_json() or {}
         player_name = data.get("player_name", "Player")
         bot_configs = data.get("bots", [
-            {"style": "TAG", "name": "曹操"},
-            {"style": "LAG", "name": "刘备"},
-            {"style": "NIT", "name": "孙权"},
-            {"style": "CALLING_STATION", "name": "诸葛"},
-            {"style": "MANIAC", "name": "吕布"},
+            {"style": "COOL", "name": "偏冷"},
+            {"style": "WARM", "name": "偏热"},
+            {"style": "COLD", "name": "极冷"},
+            {"style": "HOT", "name": "炎热"},
+            {"style": "CHAOS", "name": "混沌"},
         ])
         starting_chips = data.get("starting_chips", 1000)
         small_blind = data.get("small_blind", 5)

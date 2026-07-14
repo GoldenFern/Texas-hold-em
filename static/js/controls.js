@@ -93,20 +93,20 @@ const Controls = {
         document.getElementById('btn-call').disabled = !hasAction('CALL');
         document.getElementById('btn-raise').disabled = !hasAction('RAISE') && !hasAction('BET');
 
-        // 更新 Call 按钮文字
+        // 更新 跟注 按钮文字
         if (toCall > 0) {
-            document.getElementById('btn-call').textContent = `Call $${toCall}`;
+            document.getElementById('btn-call').textContent = `跟注 $${toCall}`;
         } else {
-            document.getElementById('btn-call').textContent = 'Call';
+            document.getElementById('btn-call').textContent = '跟注';
             document.getElementById('btn-call').disabled = true;
         }
 
-        // 更新 Bet/Raise 按钮文字
+        // 更新 加注/下注 按钮文字
         const canRaise = hasAction('RAISE');
         const canBet = hasAction('BET');
         if (canBet || canRaise) {
             const btn = document.getElementById('btn-raise');
-            btn.textContent = canBet ? 'Bet' : 'Raise';
+            btn.textContent = canBet ? '下注' : '加注';
             btn.disabled = false;
         }
 
@@ -129,12 +129,19 @@ const Controls = {
         });
     },
 
+    /** 重新启用动作按钮（根据当前 gameState） */
+    enableAll() {
+        if (this._app && this._app.gameState) {
+            this.update(this._app.gameState);
+        }
+    },
+
     /** 设置状态文本 */
     setStatus(text) {
         document.getElementById('action-status').textContent = text;
     },
 
-    /** 手牌完成后显示结果和继续/结束按钮 */
+    /** 手牌完成后设置状态文字（继续/结束操作由弹窗处理） */
     showHandResult(data) {
         const winners = (data.players || []).filter(p => p.is_winner);
         const winnerText = winners.map(w =>
@@ -144,38 +151,13 @@ const Controls = {
         console.log('[Controls] 手牌完成:', data.hand_id, winnerText);
         this.setStatus(`🏆 手牌 #${data.hand_id} 结束 — 赢家: ${winnerText}`);
 
-        // 隐藏常规动作按钮，显示继续/结束按钮
+        // 隐藏常规动作按钮（弹窗内提供继续/结束操作）
         document.getElementById('action-buttons').style.display = 'none';
         document.getElementById('bet-controls').style.display = 'none';
-
-        let pauseDiv = document.getElementById('hand-pause-controls');
-        if (!pauseDiv) {
-            pauseDiv = document.createElement('div');
-            pauseDiv.id = 'hand-pause-controls';
-            pauseDiv.style.cssText = 'display:flex;gap:10px;justify-content:center;';
-            pauseDiv.innerHTML = `
-                <button id="btn-continue-game" class="btn btn-action btn-primary">▶ 继续下一局</button>
-                <button id="btn-end-game" class="btn btn-action btn-danger">⏹ 结束游戏</button>
-            `;
-            document.getElementById('action-panel').appendChild(pauseDiv);
-
-            // 事件委托给 App
-            document.getElementById('btn-continue-game').addEventListener('click', () => {
-                document.getElementById('modal-result').style.display = 'none';
-                this._app.socket.emit('continue_game');
-            });
-            document.getElementById('btn-end-game').addEventListener('click', () => {
-                document.getElementById('modal-result').style.display = 'none';
-                this._app.socket.emit('end_game');
-            });
-        }
-        pauseDiv.style.display = 'flex';
     },
 
-    /** 隐藏暂停按钮，恢复常规动作按钮 */
+    /** 恢复常规动作按钮 */
     hideHandResult() {
-        const pauseDiv = document.getElementById('hand-pause-controls');
-        if (pauseDiv) pauseDiv.style.display = 'none';
         const actionBtns = document.getElementById('action-buttons');
         if (actionBtns) actionBtns.style.display = '';
     },

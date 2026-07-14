@@ -5,7 +5,7 @@ import pytest
 from src.engine.card import Card
 from src.engine.game import Action, ActionType, GameState
 from src.engine.player import Player
-from src.ai.bots import BoltzmannBot, BotFactory, BotProfile, BotStyle
+from src.ai.bots import BOT_PROFILES, BoltzmannBot, BotFactory, BotProfile, BotStyle
 from src.utils.constants import GamePhase
 
 
@@ -18,8 +18,8 @@ def make_game_with_bot(bot_name: str, seat: int = 0, num: int = 3) -> GameState:
 
 class TestBotCreation:
     def test_factory_creates_all_styles(self) -> None:
-        for style in (BotStyle.NIT, BotStyle.TAG, BotStyle.SHARK,
-                       BotStyle.LAG, BotStyle.CALLING_STATION, BotStyle.MANIAC):
+        for style in (BotStyle.COLD, BotStyle.COOL, BotStyle.BALANCED,
+                       BotStyle.WARM, BotStyle.HOT, BotStyle.CHAOS):
             bot = BotFactory.create(style, seed=42)
             assert bot.style == style
             assert isinstance(bot, BoltzmannBot)
@@ -38,35 +38,35 @@ class TestBotCreation:
         assert len(names) == 6
 
     def test_custom_temperature(self) -> None:
-        bot = BotFactory.create(BotStyle.SHARK, temperature=0.25, seed=42)
+        bot = BotFactory.create(BotStyle.BALANCED, temperature=0.25, seed=42)
         assert bot.temperature == 0.25
 
 
 class TestBoltzmannBotFolding:
     """翻牌前弱牌面对加注时的行为。"""
 
-    def test_nit_folds_weak_hand(self) -> None:
-        """NIT (T=0.5) 面对加注应弃弱牌。"""
-        game = make_game_with_bot("Nit", seat=0)
+    def test_cold_folds_weak_hand(self) -> None:
+        """极冷 Bot（T=0.03 系数）面对加注应弃弱牌。"""
+        game = make_game_with_bot("Cold", seat=0)
         game.start_new_hand()
-        bot = BoltzmannBot("Nit", BotFactory.list_styles()[0], seed=42)
+        bot = BoltzmannBot("Cold", BOT_PROFILES[BotStyle.COLD], seed=42)
         p = game.players[0]
         p.hole_cards = Card.from_str_multi("7c 2d")
         game.current_bet = 50
         p.current_bet = 0
         # Only Fold/Call legal (no CHECK):
         # EV(Fold)=0, EV(Call)=0.25*(15+50)-50=-28.75
-        # T=0.5 => P(Fold) >> P(Call)
+        # T=0.03*pot ≈ 0.45 => P(Fold) >> P(Call)
         action = bot.decide(game, p)
         assert action.action_type == ActionType.FOLD
 
-    def test_cs_often_calls(self) -> None:
-        """Calling Station (T=8.0) 面对下注大概率跟注。"""
+    def test_hot_often_calls(self) -> None:
+        """炎热 Bot（T=0.60 系数）面对下注大概率跟注。"""
         calls = 0
         for s in range(20):
-            game = make_game_with_bot("CS", seat=0)
+            game = make_game_with_bot("Hot", seat=0)
             game.start_new_hand()
-            bot = BoltzmannBot("CS", BotProfile(BotStyle.CALLING_STATION, 8.0), seed=s*50)
+            bot = BoltzmannBot("Hot", BOT_PROFILES[BotStyle.HOT], seed=s*50)
             p = game.players[0]
             p.hole_cards = Card.from_str_multi("7c 2d")
             p.current_bet = 0
@@ -74,18 +74,18 @@ class TestBoltzmannBotFolding:
             a = bot.decide(game, p)
             if a.action_type == ActionType.CALL:
                 calls += 1
-        # T=8.0: EV(Fold)=0, EV(Call)=-3.75. P(Call)/P(Fold)=exp(-3.75/8)~63%
+        # T=0.60*pot≈9.0: EV(Fold)=0, EV(Call)=-3.75. P(Call)/P(Fold)=exp(-3.75/9)≈66%
         assert calls >= 8
 
 
 class TestBoltzmannBotPremium:
     """好牌行为。"""
 
-    def test_nit_plays_aa(self) -> None:
-        """NIT 拿到 AA 不应弃牌。"""
-        game = make_game_with_bot("Nit", seat=0)
+    def test_cold_plays_aa(self) -> None:
+        """极冷 Bot 拿到 AA 不应弃牌。"""
+        game = make_game_with_bot("Cold", seat=0)
         game.start_new_hand()
-        bot = BoltzmannBot("Nit", BotProfile(BotStyle.NIT, 0.5), seed=42)
+        bot = BoltzmannBot("Cold", BOT_PROFILES[BotStyle.COLD], seed=42)
         p = game.players[0]
         p.hole_cards = Card.from_str_multi("Ah As")
         action = bot.decide(game, p)
@@ -110,7 +110,7 @@ class TestBoltzmannBotCheckRule:
         """可以 Check 时，Fold 不在候选集中。"""
         game = make_game_with_bot("Bot", seat=0, num=2)
         game.start_new_hand()
-        bot = BoltzmannBot("Bot", BotProfile(BotStyle.SHARK, 2.0), seed=42)
+        bot = BoltzmannBot("Bot", BOT_PROFILES[BotStyle.BALANCED], seed=42)
         p = game.players[0]
         p.hole_cards = Card.from_str_multi("7c 2d")
         p.current_bet = 0
@@ -125,13 +125,13 @@ class TestBoltzmannBotCheckRule:
         """不能 Check 时 Fold 仍然可选。"""
         game = make_game_with_bot("Bot", seat=0, num=2)
         game.start_new_hand()
-        bot = BoltzmannBot("Bot", BotProfile(BotStyle.NIT, 0.5), seed=42)
+        bot = BoltzmannBot("Bot", BOT_PROFILES[BotStyle.COLD], seed=42)
         p = game.players[0]
         p.hole_cards = Card.from_str_multi("7c 2d")
         p.current_bet = 0
         game.current_bet = 50  # 需要跟注
         action = bot.decide(game, p)
-        # NIT 应该弃牌
+        # 极冷 Bot 应该弃牌
         assert action.action_type == ActionType.FOLD
 
 
@@ -174,8 +174,8 @@ class TestBoltzmannBotDecide:
             assert action.action_type in legal
 
     def test_respects_all_in(self) -> None:
-        bot = BoltzmannBot("TAG", BotProfile(BotStyle.TAG, 1.0), seed=42)
-        game = make_game_with_bot("TAG", seat=0)
+        bot = BoltzmannBot("Cool", BOT_PROFILES[BotStyle.COOL], seed=42)
+        game = make_game_with_bot("Cool", seat=0)
         game.start_new_hand()
         p = game.players[0]
         p.hole_cards = Card.from_str_multi("7c 2d")
@@ -189,13 +189,13 @@ class TestBoltzmannBotDecide:
 class TestBoltzmannTemperatures:
     """温度行为验证。"""
 
-    def test_maniac_rarely_folds(self) -> None:
-        """Maniac (T=16) 面对下注也不太弃牌。"""
+    def test_chaos_rarely_folds(self) -> None:
+        """混沌 Bot（T=1.20 系数）面对下注也不太弃牌。"""
         folds = 0
         for s in range(30):
-            game = make_game_with_bot("Maniac", seat=0)
+            game = make_game_with_bot("Chaos", seat=0)
             game.start_new_hand()
-            bot = BoltzmannBot("Maniac", BotProfile(BotStyle.MANIAC, 16.0), seed=s*10)
+            bot = BoltzmannBot("Chaos", BOT_PROFILES[BotStyle.CHAOS], seed=s*10)
             p = game.players[0]
             p.hole_cards = Card.from_str_multi("2c 7d")
             p.current_bet = 0
@@ -203,23 +203,22 @@ class TestBoltzmannTemperatures:
             action = bot.decide(game, p)
             if action.action_type == ActionType.FOLD:
                 folds += 1
-        # EV(Call) = -3.75, P(Fold)/P(Call) = exp(3.75/16) ≈ 1.26
-        # P(Fold) ≈ 56%, P(Call) ≈ 44%. 30 samples: folds ~ 15-18
-        assert folds <= 25, f"Maniac folded {folds}/30"
+        # EV(Call) = -3.75, P(Fold)/P(Call) = exp(3.75/18) ≈ 1.23 (T=1.20*pot≈18 at 15BB)
+        # P(Fold) ≈ 55%. 30 samples: folds ~ 15-17
+        assert folds <= 25, f"Chaos folded {folds}/30"
 
-    def test_lag_plays_medium_hands(self) -> None:
-        """LAG (T=4) 对中等牌有较高入池率。"""
+    def test_warm_plays_medium_hands(self) -> None:
+        """偏热 Bot（T=0.30 系数）对中等牌有较高入池率。"""
         plays = 0
         for s in range(30):
-            game = make_game_with_bot("LAG", seat=0)
+            game = make_game_with_bot("Warm", seat=0)
             game.start_new_hand()
-            bot = BoltzmannBot("LAG", BotProfile(BotStyle.LAG, 4.0), seed=s*33)
+            bot = BoltzmannBot("Warm", BOT_PROFILES[BotStyle.WARM], seed=s*33)
             p = game.players[0]
             p.hole_cards = Card.from_str_multi("5c 4h")
             action = bot.decide(game, p)
             if action.action_type != ActionType.FOLD:
                 plays += 1
-        # LAG T=4: 54s strength~39, EV(check)=15.6. 
+        # 偏热 T=0.30*pot≈4.5: 54s strength~39, EV(check)=15.6
         # 翻牌前 BB 未加注 -> CHECK always (no fold option)
-        # But wait: check is always available preflop for BB. So plays should be 30.
-        assert plays >= 10, f"LAG only played {plays}/30"
+        assert plays >= 10, f"Warm only played {plays}/30"

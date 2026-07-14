@@ -3,20 +3,19 @@
 所有 Bot 使用同一算法：计算各合法动作的期望收益（EV），然后通过
 玻尔兹曼分布 P ∝ exp(EV/T) 采样。温度 T 是唯一个性参数。
 
-风格预设（仅温度不同）：
-    NIT (0.5) — 极冷，近乎确定性地选最优动作
-    TAG (1.0) — 偏冷，明显偏好高 EV
-    Shark (2.0) — 温和均衡，默认值
-    LAG (4.0) — 偏热，EV 差异被部分抹平
-    CallingStation (8.0) — 热，Fold 的 EV 优势不明显
-    Maniac (16.0) — 极热，近乎均匀随机
+风格预设（仅温度不同，名称反映决策的"温度"而非传统扑克风格）：
+    COLD (0.03) — 极冷，近乎确定性地选最优动作
+    COOL (0.07) — 偏冷，明显偏好高 EV
+    BALANCED (0.15) — 温和均衡，默认值
+    WARM (0.30) — 偏热，EV 差异被部分抹平
+    HOT (0.60) — 炎热，Fold 的 EV 优势不明显
+    CHAOS (1.20) — 极热/混沌，近乎均匀随机
 """
 
 from __future__ import annotations
 
 import math
 import random
-from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
@@ -30,14 +29,14 @@ from src.utils.constants import GamePhase
 
 
 class BotStyle(Enum):
-    """机器人风格枚举。"""
+    """机器人风格枚举 —— 按温度命名，反映决策的随机性程度。"""
 
-    TAG = "TAG"
-    LAG = "LAG"
-    NIT = "NIT"
-    CALLING_STATION = "CALLING_STATION"
-    MANIAC = "MANIAC"
-    SHARK = "SHARK"
+    COLD = "COLD"           # T=0.03  极冷
+    COOL = "COOL"           # T=0.07  偏冷
+    BALANCED = "BALANCED"   # T=0.15  均衡（默认）
+    WARM = "WARM"           # T=0.30  偏热
+    HOT = "HOT"             # T=0.60  炎热
+    CHAOS = "CHAOS"         # T=1.20  混沌
     LLM = "LLM"
     RLCARD = "RLCARD"
 
@@ -54,39 +53,39 @@ class BotProfile:
 
 # 温度预设（pot 标度系数；T = coefficient * pot, 单位 BB）
 BOT_PROFILES: Dict[BotStyle, BotProfile] = {
-    BotStyle.NIT: BotProfile(
-        style=BotStyle.NIT, temperature=0.03,
-        display_name="谨小慎微",
-        description="极冷。近乎确定性，只选 EV 最高的动作。",
+    BotStyle.COLD: BotProfile(
+        style=BotStyle.COLD, temperature=0.03,
+        display_name="极冷 T=0.03",
+        description="近乎确定性，只选 EV 最高的动作。",
     ),
-    BotStyle.TAG: BotProfile(
-        style=BotStyle.TAG, temperature=0.07,
-        display_name="老谋深算",
-        description="偏冷。明显偏好高 EV 动作，中强牌入池。",
+    BotStyle.COOL: BotProfile(
+        style=BotStyle.COOL, temperature=0.07,
+        display_name="偏冷 T=0.07",
+        description="明显偏好高 EV 动作，中强牌入池。",
     ),
-    BotStyle.SHARK: BotProfile(
-        style=BotStyle.SHARK, temperature=0.15,
-        display_name="运筹帷幄",
+    BotStyle.BALANCED: BotProfile(
+        style=BotStyle.BALANCED, temperature=0.15,
+        display_name="均衡 T=0.15",
         description="温和均衡，EV 驱动决策。",
     ),
-    BotStyle.LAG: BotProfile(
-        style=BotStyle.LAG, temperature=0.30,
-        display_name="锋芒毕露",
-        description="偏热。EV 差异被部分抹平，更爱探索和施压。",
+    BotStyle.WARM: BotProfile(
+        style=BotStyle.WARM, temperature=0.30,
+        display_name="偏热 T=0.30",
+        description="EV 差异被部分抹平，更爱探索和施压。",
     ),
-    BotStyle.CALLING_STATION: BotProfile(
-        style=BotStyle.CALLING_STATION, temperature=0.60,
-        display_name="随波逐流",
-        description="热。Fold 的 EV 优势不明显，几乎不弃牌。",
+    BotStyle.HOT: BotProfile(
+        style=BotStyle.HOT, temperature=0.60,
+        display_name="炎热 T=0.60",
+        description="Fold 的 EV 优势不明显，几乎不弃牌。",
     ),
-    BotStyle.MANIAC: BotProfile(
-        style=BotStyle.MANIAC, temperature=1.20,
-        display_name="狂放不羁",
-        description="极热。近乎均匀随机，无视牌力。",
+    BotStyle.CHAOS: BotProfile(
+        style=BotStyle.CHAOS, temperature=1.20,
+        display_name="混沌 T=1.20",
+        description="近乎均匀随机，无视牌力。",
     ),
     BotStyle.LLM: BotProfile(
         style=BotStyle.LLM, temperature=0.15,
-        display_name="神机妙算",
+        display_name="LLM",
         description="LLM 驱动。",
     ),
     BotStyle.RLCARD: BotProfile(
@@ -96,20 +95,20 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
     ),
 }
 
-# 风格成语 -> BotStyle 映射
+# 风格显示名 -> BotStyle 映射
 STYLE_IDIOM_MAP: Dict[str, BotStyle] = {
-    "谨小慎微": BotStyle.NIT,
-    "老谋深算": BotStyle.TAG,
-    "运筹帷幄": BotStyle.SHARK,
-    "锋芒毕露": BotStyle.LAG,
-    "随波逐流": BotStyle.CALLING_STATION,
-    "狂放不羁": BotStyle.MANIAC,
-    "神机妙算": BotStyle.LLM,
+    "极冷 T=0.03": BotStyle.COLD,
+    "偏冷 T=0.07": BotStyle.COOL,
+    "均衡 T=0.15": BotStyle.BALANCED,
+    "偏热 T=0.30": BotStyle.WARM,
+    "炎热 T=0.60": BotStyle.HOT,
+    "混沌 T=1.20": BotStyle.CHAOS,
+    "LLM": BotStyle.LLM,
     "算无遗策": BotStyle.RLCARD,
 }
 
 
-class BoltzmannBot(ABC):
+class BoltzmannBot:
     """Boltzmann-EV 统一决策 Bot。
 
     所有合法动作计算 EV（BB 单位），通过 P ∝ exp(EV/T) 采样。
@@ -120,6 +119,10 @@ class BoltzmannBot(ABC):
         self, name: str, profile: BotProfile,
         seed: int = 42,
         postflop_sims: int = 200,
+        bet_k_value: float = 0.6,
+        bet_k_bluff: float = 0.65,
+        bet_cap_frac: float = 0.75,
+        bet_strategy: str = "separated",
     ) -> None:
         self.name = name
         self.profile = profile
@@ -128,6 +131,11 @@ class BoltzmannBot(ABC):
         self.analyzer = BattleAnalyzer(
             preflop_sims=0, postflop_sims=postflop_sims, seed=seed,
         )
+        # 下注参数
+        self.bet_k_value = bet_k_value
+        self.bet_k_bluff = bet_k_bluff
+        self.bet_cap_frac = bet_cap_frac
+        self.bet_strategy = bet_strategy  # "blended", "value_only", "separated"
 
         self.hands_seen: int = 0
 
@@ -165,7 +173,12 @@ class BoltzmannBot(ABC):
 
         # 胜率：翻牌前查表，翻牌后 MC
         if game_state.phase == GamePhase.PRE_FLOP:
-            win_rate = preflop_hand_strength(hole_cards) / 100.0
+            raw_equity = preflop_hand_strength(hole_cards) / 100.0
+            # 多人底池修正：指数衰减近似（查表值基于 vs 1 个对手）
+            if active_opponents > 1:
+                win_rate = raw_equity ** (1.0 + 0.3 * (active_opponents - 1))
+            else:
+                win_rate = raw_equity
         else:
             analysis = self.analyzer.analyze(
                 hole_cards, community, active_opponents, game_state, player,
@@ -188,15 +201,32 @@ class BoltzmannBot(ABC):
         if ActionType.CALL in legal and to_call > 0:
             action_evs[ActionType.CALL] = win_rate * (pot + to_call) - to_call
 
-        # Bet / Raise（如果可用）——胜率驱动下注额
+        # Bet / Raise（如果可用）——胜率驱动下注额（含 value + bluff）
         bet_action = (
             ActionType.BET if ActionType.BET in legal
             else ActionType.RAISE if ActionType.RAISE in legal
             else None
         )
         if bet_action is not None and active_opponents >= 0:
-            k = 0.8  # 下注系数
-            x = win_rate * k * pot  # 下注额 (BB)
+            cap = self.bet_cap_frac * pot  # 下注上限（pot 的倍数）
+
+            if self.bet_strategy == "value_only":
+                # 纯价值下注：下注额与胜率成正比
+                x = win_rate * self.bet_k_value * pot
+
+            elif self.bet_strategy == "separated":
+                # 分离策略：强牌 value，弱牌 bluff（固定比例）
+                if win_rate > 0.55:
+                    x = win_rate * self.bet_k_value * pot  # 价值下注
+                else:
+                    x = self.bet_k_bluff * pot  # 诈唬下注（固定大小）
+
+            else:  # "blended"（默认/当前策略）
+                x_value = win_rate * self.bet_k_value * pot
+                x_bluff = (1.0 - win_rate) * self.bet_k_bluff * pot * 0.5
+                x = x_value + x_bluff
+
+            x = min(x, cap)  # 上限不超过 cap
 
             # 确定最小合法下注额
             if bet_action == ActionType.BET:
@@ -344,10 +374,10 @@ class BotFactory:
 
     @classmethod
     def create_all_styles(cls) -> List[BoltzmannBot]:
-        """创建所有 6 种风格的 Boltzmann Bot。"""
+        """创建所有 6 种温度的 Boltzmann Bot。"""
         styles = [
-            BotStyle.NIT, BotStyle.TAG, BotStyle.SHARK,
-            BotStyle.LAG, BotStyle.CALLING_STATION, BotStyle.MANIAC,
+            BotStyle.COLD, BotStyle.COOL, BotStyle.BALANCED,
+            BotStyle.WARM, BotStyle.HOT, BotStyle.CHAOS,
         ]
         return [cls.create(s, seed=hash(s.value) % 10000) for s in styles]
 
@@ -365,5 +395,3 @@ class BotFactory:
         return styles
 
 
-# 兼容别名：LLMBot 通过此引用 BotBase
-BotBase = BoltzmannBot

@@ -74,6 +74,7 @@ class GameState:
         big_blind: int = 10,
         ante: int = 0,
         betting_structure: BettingStructure = BettingStructure.NO_LIMIT,
+        auto_rebuy: bool = True,
     ) -> None:
         if len(players) < 2:
             raise ValueError("至少需要 2 名玩家")
@@ -85,6 +86,7 @@ class GameState:
         self.big_blind = big_blind
         self.ante = ante
         self.betting_structure = betting_structure
+        self.auto_rebuy = auto_rebuy
 
         self.deck = Deck()
         self.pot = Pot()
@@ -146,9 +148,10 @@ class GameState:
             p.reset_for_new_hand()
 
         # 自动重购：本金输光的玩家重新获得 1000 筹码
-        for p in self.players:
-            if p.chips == 0:
-                p.rebuy(1000)
+        if self.auto_rebuy:
+            for p in self.players:
+                if p.chips == 0:
+                    p.rebuy(1000)
 
         # 移除无筹码的玩家
         active_players = [p for p in self.players if p.chips > 0]
@@ -488,14 +491,18 @@ class GameState:
         if self.betting_structure == BettingStructure.NO_LIMIT:
             return player.chips + player.current_bet
         elif self.betting_structure == BettingStructure.POT_LIMIT:
+            to_call = self.current_bet - player.current_bet
+            pot_after_call = self.pot.total + to_call
             return min(
                 player.chips + player.current_bet,
-                self.pot.total + player.current_bet,
+                pot_after_call + player.current_bet + to_call,
             )
         else:  # FIXED_LIMIT
+            big_bet = self.big_blind * 2
+            bet_size = big_bet if self.phase >= GamePhase.TURN else self.big_blind
             return min(
                 player.chips + player.current_bet,
-                self.current_bet + self.big_blind * (4 if self.phase >= GamePhase.TURN else 2),
+                self.current_bet + bet_size,
             )
 
     def get_min_raise_amount(self, player: Player) -> int:

@@ -41,8 +41,8 @@ def run_cli(num_hands: int = 10) -> None:
     from src.ai.bots import BotFactory, BotStyle
 
     styles = [
-        BotStyle.TAG, BotStyle.LAG, BotStyle.NIT,
-        BotStyle.CALLING_STATION, BotStyle.MANIAC, BotStyle.SHARK,
+        BotStyle.COOL, BotStyle.WARM, BotStyle.COLD,
+        BotStyle.HOT, BotStyle.CHAOS, BotStyle.BALANCED,
     ]
     bots = [BotFactory.create(s, name=s.value, seed=i * 100) for i, s in enumerate(styles)]
     players = [

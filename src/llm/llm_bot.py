@@ -13,14 +13,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from src.ai.bots import BotBase, BotFactory, BotProfile, BotStyle
+from src.ai.bots import BoltzmannBot, BotFactory, BotProfile, BotStyle
 from src.ai.strategy import (
     has_draw,
     is_premium_hand,
     postflop_hand_strength,
     preflop_hand_strength,
 )
-from src.analysis.equity import EquityCalculator
 from src.engine.game import Action, ActionType, GameState
 from src.engine.player import Player
 from src.llm.client import (
@@ -41,7 +40,7 @@ from src.utils.constants import GamePhase
 logger = logging.getLogger(__name__)
 
 
-class LLMBot(BotBase):
+class LLMBot(BoltzmannBot):
     """LLM 驱动的扑克机器人。
 
     继承 BotBase，覆写 decide() 方法接入 LLM 决策。
@@ -51,7 +50,6 @@ class LLMBot(BotBase):
         llm_client: 主力 LLM 客户端。
         fallback_chain: 多级降级链。
         call_frequency: LLM 调用频率策略。
-        equity_calc: 蒙特卡洛胜率计算器。
         decision_log: 最近 N 次决策记录。
     """
 
@@ -63,7 +61,7 @@ class LLMBot(BotBase):
     ) -> None:
         # 使用 Shark 配置作为降级基准（最接近 GTO）
         from src.ai.bots import BOT_PROFILES
-        profile = BOT_PROFILES[BotStyle.SHARK]
+        profile = BOT_PROFILES[BotStyle.BALANCED]
         super().__init__(name, profile, seed)
 
         # LLM 配置
@@ -73,13 +71,10 @@ class LLMBot(BotBase):
         self._setup_clients()
 
         # 降级规则引擎（SharkBot）
-        self._rule_bot = BotFactory.create(BotStyle.SHARK, name=f"{name}_rule", seed=seed)
+        self._rule_bot = BotFactory.create(BotStyle.BALANCED, name=f"{name}_rule", seed=seed)
         self._fallback_chain.set_ultimate_fallback(
             lambda g, p: self._rule_bot.decide(g, p)
         )
-
-        # 蒙特卡洛胜率计算器
-        self._equity_calc = EquityCalculator(num_simulations=500, seed=seed)
 
         # 决策统计
         self.llm_decisions: int = 0
@@ -270,33 +265,7 @@ class LLMBot(BotBase):
     # ================================================================
 
     def _estimate_equity(self, game: GameState, player: Player) -> float:
-        """估算当前手牌胜率（蒙特卡洛）。"""
-        active_players = [
-            p for p in game.players
-            if not p.is_folded and p.name != player.name
-        ]
-        if not active_players:
-            return 100.0
-
-        # 仅当有已知牌和足够的社区牌时计算
-        if len(game.community_cards) >= 3:
-            try:
-                # 单挑估算
-                opponent = active_players[0]
-                if opponent.hole_cards:
-                    # 对手底牌未知 → 使用蒙特卡洛 vs 随机范围
-                    pass
-                win_a, win_b, tie = self._equity_calc.heads_up_equity(
-                    player.hole_cards,
-                    # 对手底牌未知，用随机占位
-                    [],
-                    game.community_cards,
-                )
-                return win_a * 100.0
-            except Exception:
-                pass
-
-        # 翻牌前 / 无法计算 → 用手牌强度近似
+        """估算当前手牌胜率（基于 MC 胜率）。"""
         strength = postflop_hand_strength(player.hole_cards, game.community_cards)
         return strength * 100.0
 

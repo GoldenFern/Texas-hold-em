@@ -2,23 +2,23 @@
  * app.js — 主入口：SocketIO 连接、状态管理、事件路由。
  */
 
-// 机器人风格列表（value: 英文键, label: 中文成语）
+// 机器人风格列表（value: BotStyle enum key, label: 显示名）
 // RLCARD 根据服务端能力动态添加
 const BASE_BOT_STYLES = [
-    { value: 'TAG',              label: '老谋深算', temperature: 0.07 },
-    { value: 'LAG',              label: '锋芒毕露', temperature: 0.30 },
-    { value: 'NIT',              label: '谨小慎微', temperature: 0.03 },
-    { value: 'CALLING_STATION',  label: '随波逐流', temperature: 0.60 },
-    { value: 'MANIAC',           label: '狂放不羁', temperature: 1.20 },
-    { value: 'SHARK',            label: '运筹帷幄', temperature: 0.15 },
-    { value: 'LLM',              label: '神机妙算', temperature: 0.15 },
+    { value: 'COLD',     label: '极冷 T=0.03',   temperature: 0.03 },
+    { value: 'COOL',     label: '偏冷 T=0.07',   temperature: 0.07 },
+    { value: 'BALANCED', label: '均衡 T=0.15',   temperature: 0.15 },
+    { value: 'WARM',     label: '偏热 T=0.30',   temperature: 0.30 },
+    { value: 'HOT',      label: '炎热 T=0.60',   temperature: 0.60 },
+    { value: 'CHAOS',    label: '混沌 T=1.20',   temperature: 1.20 },
+    { value: 'LLM',      label: 'LLM',           temperature: 0.15 },
 ];
 
 // 运行时 BOT_STYLES 列表（由 _loadCapabilities 填充）
 let BOT_STYLES = [...BASE_BOT_STYLES];
 
 // 默认机器人名字
-const DEFAULT_BOT_NAMES = ['曹操', '刘备', '孙权', '诸葛', '司马', '周瑜', '吕布', '赵云'];
+const DEFAULT_BOT_NAMES = ['极冷', '偏冷', '均衡', '偏热', '炎热', '混沌'];
 
 const App = {
     socket: null,
@@ -119,6 +119,7 @@ const App = {
 
         this.socket.on('game_update', (state) => {
             this.gameState = state;
+            if (this._replayActive) return;  // 回放模式下不更新牌桌
             Controls.hideHandResult();  // 新状态到达时隐藏暂停面板
             Table.render(state);
             Controls.update(state);
@@ -138,6 +139,7 @@ const App = {
         });
 
         this.socket.on('hand_completed', (data) => {
+            if (this._replayActive) return;  // 回放模式下不弹出结果面板
             Controls.showHandResult(data);
             UI.showCardResult(data);
         });
@@ -179,60 +181,30 @@ const App = {
         document.getElementById('btn-close-modal').addEventListener('click', () => {
             document.getElementById('modal-new-game').style.display = 'none';
         });
-        document.getElementById('btn-close-result').addEventListener('click', () => {
-            document.getElementById('modal-result').style.display = 'none';
-        });
         document.getElementById('btn-replay-from-result').addEventListener('click', () => {
             document.getElementById('modal-result').style.display = 'none';
             this._openReplay();
         });
+        document.getElementById('btn-continue-from-result').addEventListener('click', () => {
+            document.getElementById('modal-result').style.display = 'none';
+            this.socket.emit('continue_game');
+        });
+        document.getElementById('btn-end-from-result').addEventListener('click', () => {
+            document.getElementById('modal-result').style.display = 'none';
+            this.socket.emit('end_game');
+        });
 
         // 回放控制
-        document.getElementById('btn-replay-play').addEventListener('click', () => {
-            if (this._replayPlaying) this._pauseReplay();
-            else this._startReplay();
-        });
         document.getElementById('btn-replay-prev').addEventListener('click', () => this._stepReplay(-1));
         document.getElementById('btn-replay-next').addEventListener('click', () => this._stepReplay(1));
-        document.getElementById('btn-replay-reset').addEventListener('click', () => this._resetReplay());
         document.getElementById('btn-replay-exit').addEventListener('click', () => this._exitReplay());
-
-        // 回放速度选择
-        const speedSel = document.getElementById('replay-speed');
-        if (speedSel) {
-            speedSel.addEventListener('change', (e) => {
-                this._replaySpeed = parseInt(e.target.value) || 400;
-            });
-        }
-
-        // 回放进度条点击跳转
-        const progressBar = document.getElementById('replay-progress-container');
-        if (progressBar) {
-            progressBar.addEventListener('click', (e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const pct = (e.clientX - rect.left) / rect.width;
-                const max = this._replayData?.actions?.length || 0;
-                if (max > 0) {
-                    const targetStep = Math.round(pct * max);
-                    this._pauseReplay();
-                    this._replayStep = Math.max(0, Math.min(targetStep, max));
-                    this._renderReplayTable();
-                }
-            });
-        }
 
         // 键盘快捷键（仅在回放模式）
         document.addEventListener('keydown', (e) => {
             if (!this._replayActive) return;
-            // 跳过输入框中的按键
             const tag = e.target.tagName;
             if (tag === 'INPUT' || tag === 'TEXTAREA') return;
             switch (e.key) {
-                case ' ':
-                    e.preventDefault();
-                    if (this._replayPlaying) this._pauseReplay();
-                    else this._startReplay();
-                    break;
                 case 'ArrowRight':
                     e.preventDefault();
                     this._stepReplay(1);
@@ -241,9 +213,9 @@ const App = {
                     e.preventDefault();
                     this._stepReplay(-1);
                     break;
-                case 'r':
-                case 'R':
-                    if (!e.ctrlKey && !e.metaKey) this._resetReplay();
+                case 'Escape':
+                    e.preventDefault();
+                    this._exitReplay();
                     break;
             }
         });
@@ -269,10 +241,7 @@ const App = {
 
     _replayData: null,
     _replayStep: 0,
-    _replayPlaying: false,
-    _replayTimer: null,
     _replayActive: false,      // 是否处于回放模式
-    _replaySpeed: 400,         // 播放间隔（毫秒）
     _replayLoading: false,     // 防止重复加载
 
     /** 打开回放面板（handId 可选，默认最近一手） */
@@ -288,8 +257,7 @@ const App = {
         this._switchToHistoryTab();
 
         if (handId) {
-            // 直接加载指定手牌
-            this._replayLoading = false;
+            // 直接加载指定手牌（锁在 _loadReplayHand 的 finally 中释放）
             this._loadReplayHand(handId);
             return;
         }
@@ -343,13 +311,13 @@ const App = {
                     'snapshots:', data.step_snapshots?.length);
                 this._replayData = data;
                 this._replayStep = 0;
-                this._replayPlaying = false;
                 this._replayActive = true;
-                document.getElementById('btn-replay-play').textContent = '▶ 播放';
 
-                // 隐藏常规 UI，显示回放控件
+                // 隐藏操作按钮，防止"正在打新局+回放"叠加态
                 Controls.disableAll();
                 Controls.setStatus('🔄 回放模式 — 手牌 #' + data.hand_id);
+                // 隐藏动作按钮
+                document.getElementById('action-buttons').style.display = 'none';
                 const controls = document.getElementById('replay-controls');
                 if (controls) {
                     controls.classList.add('active');
@@ -371,22 +339,27 @@ const App = {
             .catch(e => {
                 console.error('Replay: load failed', e);
                 alert('加载回放数据失败: ' + e.message);
+            })
+            .finally(() => {
+                this._replayLoading = false;
             });
     },
 
     /** 退出回放 */
     _exitReplay() {
-        this._pauseReplay();
         this._replayActive = false;
         const controls = document.getElementById('replay-controls');
         if (controls) {
             controls.classList.remove('active');
         }
+        // 恢复操作按钮
+        document.getElementById('action-buttons').style.display = '';
         // 清除历史条目高亮
         document.querySelectorAll('.history-item').forEach(el =>
             el.classList.remove('history-item-active'));
         document.getElementById('hand-counter-toolbar').textContent = this.gameState ? `手牌 #${this.gameState.hand_id}` : '等待开始';
         Controls.setStatus('已退出回放');
+        Controls.enableAll();
         // 恢复牌桌
         try {
             if (this.gameState) {
@@ -493,13 +466,6 @@ const App = {
         document.getElementById('replay-step-counter').textContent =
             `${Math.min(step, max)} / ${max}`;
 
-        // 更新进度条
-        const progressFill = document.getElementById('replay-progress-fill');
-        if (progressFill) {
-            const pct = max > 0 ? (step / max) * 100 : 0;
-            progressFill.style.width = pct + '%';
-        }
-
         // 更新信息栏
         let infoHTML = '';
         if (step < max && currentAction) {
@@ -519,50 +485,13 @@ const App = {
 
         // 更新按钮
         document.getElementById('btn-replay-prev').disabled = step <= 0;
-        document.getElementById('btn-replay-play').disabled = step >= max;
         document.getElementById('btn-replay-next').disabled = step >= max;
-    },
-
-    /** 开始自动播放 */
-    _startReplay() {
-        this._replayPlaying = true;
-        document.getElementById('btn-replay-play').textContent = '⏸ 暂停';
-        this._replayAdvance();
-    },
-
-    /** 暂停 */
-    _pauseReplay() {
-        this._replayPlaying = false;
-        document.getElementById('btn-replay-play').textContent = '▶ 播放';
-        if (this._replayTimer) { clearTimeout(this._replayTimer); this._replayTimer = null; }
-    },
-
-    /** 自动推进 */
-    _replayAdvance() {
-        if (!this._replayPlaying || !this._replayActive) return;
-        const max = this._replayData?.actions?.length || 0;
-        if (this._replayStep < max) {
-            this._renderReplayTable();
-            this._replayStep++;
-            this._replayTimer = setTimeout(() => this._replayAdvance(), this._replaySpeed || 400);
-        } else {
-            this._renderReplayTable();
-            this._pauseReplay();
-        }
     },
 
     /** 手动步进 */
     _stepReplay(delta) {
-        this._pauseReplay();
         const max = this._replayData?.actions?.length || 0;
         this._replayStep = Math.max(0, Math.min(max, this._replayStep + delta));
-        this._renderReplayTable();
-    },
-
-    /** 重置回放 */
-    _resetReplay() {
-        this._pauseReplay();
-        this._replayStep = 0;
         this._renderReplayTable();
     },
 

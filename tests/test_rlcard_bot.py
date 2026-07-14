@@ -91,7 +91,7 @@ class TestBotFactoryRLCard:
 
         if _rl_installed:
             bot = BotFactory.create(BotStyle.RLCARD, name="TestRL", seed=42)
-            assert bot.style == BotStyle.SHARK
+            assert bot.style == BotStyle.BALANCED
             assert bot.name == "TestRL"
         else:
             with pytest.raises(Exception):
@@ -567,7 +567,7 @@ class TestRLCardBotIntegration:
         from src.rlcard.rlcard_bot import RLCardBot
 
         rl_bot = RLCardBot("RL", seed=42)
-        rule_bot = BotFactory.create(BotStyle.SHARK, name="Shark", seed=99)
+        rule_bot = BotFactory.create(BotStyle.BALANCED, name="Balanced", seed=99)
 
         bots = [rl_bot, rule_bot]
         players = [
@@ -612,7 +612,7 @@ class TestRLCardBotIntegration:
         from src.rlcard.rlcard_bot import RLCardBot
 
         rl_bot = RLCardBot("RL", seed=42)
-        rule_bot = BotFactory.create(BotStyle.SHARK, name="Shark", seed=99)
+        rule_bot = BotFactory.create(BotStyle.BALANCED, name="Balanced", seed=99)
         bots = [rl_bot, rule_bot]
         players = [
             Player(name=bot.name, chips=1000, seat=i)

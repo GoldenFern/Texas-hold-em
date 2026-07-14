@@ -11,6 +11,7 @@ from typing import Dict, List, Optional
 from src.engine.card import Card, Cards
 from src.engine.game import GameState
 from src.engine.player import Player
+from src.utils._card_helpers import detect_draws
 from src.utils.constants import ActionType, GamePhase, PlayerStatus
 
 
@@ -311,25 +312,8 @@ class PromptBuilder:
 
     @staticmethod
     def _detect_draws(hole_cards: Cards, community_cards: Cards) -> tuple:
-        """检测听牌（复用 strategy.py 逻辑的简化版）。"""
-        from collections import Counter
-        all_cards = hole_cards + community_cards
-
-        # 同花听牌
-        suit_counts = Counter(c.suit for c in all_cards)
-        flush_draw = any(count == 4 for count in suit_counts.values())
-
-        # 顺子听牌
-        ranks = sorted(set(c.rank.value for c in all_cards))
-        straight_draw = False
-        for i in range(len(ranks) - 3):
-            if ranks[i + 3] - ranks[i] <= 4:
-                straight_draw = True
-                break
-        if 14 in ranks and {2, 3, 4}.issubset(set(ranks)):
-            straight_draw = True
-
-        return flush_draw, straight_draw
+        """检测听牌（委托共享实现）。"""
+        return detect_draws(hole_cards, community_cards)
 
     @staticmethod
     def _format_legal_actions(

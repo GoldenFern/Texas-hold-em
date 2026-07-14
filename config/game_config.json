@@ -8,5 +8,5 @@
   "betting_structure": "no_limit",
   "time_bank_seconds": 30,
   "default_bot_count": 4,
-  "default_bot_style": "TAG"
+  "default_bot_style": "BALANCED"
 }

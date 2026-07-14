@@ -65,7 +65,7 @@ class GameManager:
             ))
 
             # 机器人玩家
-            has_rlcard = any(BotStyle(cfg.get("style", "TAG")) == BotStyle.RLCARD for cfg in bot_configs)
+            has_rlcard = any(BotStyle(cfg.get("style", "BALANCED")) == BotStyle.RLCARD for cfg in bot_configs)
             if has_rlcard:
                 if len(bot_configs) != 1:
                     raise ValueError(
@@ -83,7 +83,7 @@ class GameManager:
                     )
 
             for i, cfg in enumerate(bot_configs):
-                style_name = cfg.get("style", "TAG")
+                style_name = cfg.get("style", "BALANCED")
                 bot_name = cfg.get("name", f"Bot{i+1}")
                 style = BotStyle(style_name)
 
@@ -424,6 +424,11 @@ class GameManager:
                     best_five = [c.short_str for c in result.best_five]
                     hand_description = result.description
                     sort_key = result.score  # 元组可比，越小牌力越强
+                else:
+                    # 不足 5 张牌（翻牌前/翻牌圈结束），直接展示已有底牌
+                    best_five = [c.short_str for c in p.hole_cards]
+                    hand_description = "未摊牌"
+                    sort_key = None
             player_dict = {
                 "name": p.name,
                 "is_folded": is_folded,
@@ -431,6 +436,7 @@ class GameManager:
                 "net_profit": winners.get(p.name, 0) - p.total_bet,
                 "best_five": best_five,
                 "hand_description": hand_description,
+                "hole_cards": [c.short_str for c in p.hole_cards] if p.hole_cards else [],
             }
             entries.append((player_dict, sort_key))
 
@@ -596,11 +602,11 @@ def register_events(app: Flask) -> None:
         _game_manager.create_game(
             player_name=data.get("player_name", "Player"),
             bot_configs=data.get("bots", [
-                {"style": "TAG", "name": "曹操"},
-                {"style": "LAG", "name": "刘备"},
-                {"style": "NIT", "name": "孙权"},
-                {"style": "CALLING_STATION", "name": "诸葛"},
-                {"style": "MANIAC", "name": "吕布"},
+                {"style": "COOL", "name": "偏冷"},
+                {"style": "WARM", "name": "偏热"},
+                {"style": "COLD", "name": "极冷"},
+                {"style": "HOT", "name": "炎热"},
+                {"style": "CHAOS", "name": "混沌"},
             ]),
             starting_chips=data.get("starting_chips", 1000),
             small_blind=data.get("small_blind", 5),

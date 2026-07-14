@@ -108,8 +108,8 @@ class TestGameManager:
         mgr.create_game(
             player_name="Hero",
             bot_configs=[
-                {"style": "TAG", "name": "Bot1"},
-                {"style": "NIT", "name": "Bot2"},
+                {"style": "COOL", "name": "Bot1"},
+                {"style": "COLD", "name": "Bot2"},
             ],
             starting_chips=1000,
             small_blind=5,
@@ -139,12 +139,12 @@ class TestGameManager:
         mgr = GameManager()
         mgr.create_game(
             player_name="Hero1",
-            bot_configs=[{"style": "TAG", "name": "Bot1"}],
+            bot_configs=[{"style": "COOL", "name": "Bot1"}],
         )
         game1_id = id(mgr.game)
         mgr.create_game(
             player_name="Hero2",
-            bot_configs=[{"style": "LAG", "name": "Bot2"}],
+            bot_configs=[{"style": "WARM", "name": "Bot2"}],
         )
         assert mgr.human_player_name == "Hero2"
         assert id(mgr.game) != game1_id
@@ -153,7 +153,7 @@ class TestGameManager:
         from src.server.events import GameManager
         mgr = GameManager()
         assert mgr.get_human_player_name() == ""
-        mgr.create_game(player_name="Alice", bot_configs=[{"style": "TAG", "name": "Bot1"}])
+        mgr.create_game(player_name="Alice", bot_configs=[{"style": "COOL", "name": "Bot1"}])
         assert mgr.get_human_player_name() == "Alice"
 
     def test_replay_empty_returns_none(self) -> None:
@@ -228,7 +228,7 @@ class TestCapabilities:
             "player_name": "Hero",
             "bots": [
                 {"style": "RLCARD", "name": "RLBot"},
-                {"style": "TAG", "name": "Bot2"},
+                {"style": "COOL", "name": "Bot2"},
             ],
         })
         assert response.status_code == 400
@@ -271,7 +271,7 @@ class TestRLCardGameManager:
                 player_name="Hero",
                 bot_configs=[
                     {"style": "RLCARD", "name": "RLBot"},
-                    {"style": "TAG", "name": "Bot2"},
+                    {"style": "COOL", "name": "Bot2"},
                 ],
             )
 
@@ -285,7 +285,7 @@ class TestRLCardGameManager:
                 player_name="Hero",
                 bot_configs=[
                     {"style": "RLCARD", "name": "RLBot"},
-                    {"style": "TAG", "name": "Bot2"},
+                    {"style": "COOL", "name": "Bot2"},
                 ],
             )
 

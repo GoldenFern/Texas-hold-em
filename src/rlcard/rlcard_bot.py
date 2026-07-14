@@ -1,4 +1,4 @@
-"""RLCard 驱动的扑克机器人 —— BotBase 子类。
+"""RLCard 驱动的扑克机器人 —— BoltzmannBot 子类。
 
 使用镜像适配器将 GameState 单向翻译为 RLCard observation，
 查询 RLCard agent 后将 action_id 映射回引擎 Action。
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from src.ai.bots import BotBase, BotStyle, BOT_PROFILES
+from src.ai.bots import BoltzmannBot, BotStyle, BOT_PROFILES
 from src.engine.game import Action, ActionType, GameState
 from src.engine.player import Player
 from src.rlcard.config import RLCardConfig
@@ -21,10 +21,10 @@ from src.rlcard.policy_loader import build_agent_state, load_policy_agent
 from src.rlcard.state_encoder import OBS_DIM
 
 
-class RLCardBot(BotBase):
+class RLCardBot(BoltzmannBot):
     """RLCard 驱动的扑克机器人。
 
-    继承 BotBase，覆写 decide() 方法接入 RLCard agent 决策。
+    继承 BoltzmannBot，覆写 decide() 方法接入 RLCard agent 决策。
     rlcard 包是可选依赖。
 
     Attributes:
@@ -40,7 +40,7 @@ class RLCardBot(BotBase):
         seed: int = 42,
         rlcard_config: Optional[RLCardConfig] = None,
     ) -> None:
-        profile = BOT_PROFILES[BotStyle.SHARK]
+        profile = BOT_PROFILES[BotStyle.BALANCED]
         super().__init__(name, profile, seed)
 
         if rlcard_config is not None:

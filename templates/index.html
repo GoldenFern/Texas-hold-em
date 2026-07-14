@@ -54,10 +54,10 @@
                     <span id="action-to-call"></span>
                 </div>
                 <div id="action-buttons">
-                    <button id="btn-fold" class="btn btn-action btn-danger" disabled>Fold</button>
-                    <button id="btn-check" class="btn btn-action" disabled>Check</button>
-                    <button id="btn-call" class="btn btn-action btn-primary" disabled>Call</button>
-                    <button id="btn-raise" class="btn btn-action btn-warning" disabled>Raise</button>
+                    <button id="btn-fold" class="btn btn-action btn-danger" disabled>弃牌</button>
+                    <button id="btn-check" class="btn btn-action" disabled>过牌</button>
+                    <button id="btn-call" class="btn btn-action btn-primary" disabled>跟注</button>
+                    <button id="btn-raise" class="btn btn-action btn-warning" disabled>加注</button>
                 </div>
                 <div id="bet-controls" style="display:none;">
                     <input type="range" id="bet-slider" min="0" max="1000" value="0" step="1">
@@ -125,27 +125,14 @@
                 <div id="history-list"></div>
                 <!-- 回放控件（回放模式时显示） -->
                 <div id="replay-controls" class="replay-controls">
-                    <div class="replay-controls-header">
-                        <span id="replay-step-counter">0 / 0</span>
-                        <select id="replay-speed">
-                            <option value="1600">0.25x</option>
-                            <option value="800">0.5x</option>
-                            <option value="400" selected>1x</option>
-                            <option value="200">2x</option>
-                        </select>
-                    </div>
-                    <div id="replay-progress-container">
-                        <div id="replay-progress-bar">
-                            <div id="replay-progress-fill"></div>
-                        </div>
-                    </div>
                     <div id="replay-action-info"></div>
                     <div class="replay-buttons">
-                        <button id="btn-replay-prev" class="btn btn-sm">◀</button>
-                        <button id="btn-replay-play" class="btn btn-primary btn-sm">▶ 播放</button>
-                        <button id="btn-replay-next" class="btn btn-sm">▶</button>
-                        <button id="btn-replay-reset" class="btn btn-sm">↺</button>
+                        <button id="btn-replay-prev" class="btn btn-sm">◀ 上一步</button>
                         <button id="btn-replay-exit" class="btn btn-sm btn-danger">退出回放</button>
+                        <button id="btn-replay-next" class="btn btn-sm">下一步 ▶</button>
+                    </div>
+                    <div class="replay-step-indicator">
+                        <span id="replay-step-counter">0 / 0</span>
                     </div>
                 </div>
             </div>
@@ -335,7 +322,8 @@
             <div id="result-body"></div>
             <div class="result-buttons">
                 <button id="btn-replay-from-result" class="btn btn-sm">回放本局</button>
-                <button id="btn-close-result" class="btn btn-sm btn-primary">继续游戏</button>
+                <button id="btn-continue-from-result" class="btn btn-sm btn-primary">继续下一局</button>
+                <button id="btn-end-from-result" class="btn btn-sm btn-danger">结束游戏</button>
             </div>
         </div>
     </div>
