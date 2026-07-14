@@ -21,21 +21,16 @@ def _require_rlcard_torch() -> None:
 
 
 class TestBuildAgentState:
-    """eval_step state 字典格式。"""
+    """eval_step state 字典格式（与 RLCard env 对齐）。"""
 
-    def test_dqn_uses_list_legal_actions(self) -> None:
+    def test_legal_actions_is_ordered_dict(self) -> None:
         import numpy as np
 
         obs = np.zeros(OBS_DIM, dtype=np.float32)
-        state = build_agent_state(obs, [0, 1, 4], "dqn")
-        assert state["legal_actions"] == [0, 1, 4]
-
-    def test_dmc_uses_ordered_dict_legal_actions(self) -> None:
-        import numpy as np
-
-        obs = np.zeros(OBS_DIM, dtype=np.float32)
-        state = build_agent_state(obs, [0, 1, 4], "dmc")
-        assert list(state["legal_actions"].keys()) == [0, 1, 4]
+        for agent_type in ("random", "dqn", "dmc", "nfsp"):
+            state = build_agent_state(obs, [0, 1, 4], agent_type)
+            assert list(state["legal_actions"].keys()) == [0, 1, 4]
+            assert state["raw_legal_actions"] == [0, 1, 4]
 
 
 class TestLoadPolicyAgent:

@@ -104,20 +104,19 @@ def load_policy_agent(
 def build_agent_state(
     obs_array: Any,
     legal_action_ids: List[int],
-    agent_type: str,
+    agent_type: str = "random",
 ) -> Dict[str, Any]:
-    """按 agent 类型构建 eval_step 所需的 state 字典。"""
-    normalized = agent_type.lower().strip()
+    """构建 RLCard ``eval_step`` 所需的 state 字典。
 
-    if normalized == "dmc":
-        from collections import OrderedDict
-        return {
-            "obs": obs_array,
-            "legal_actions": OrderedDict((action_id, None) for action_id in legal_action_ids),
-            "raw_legal_actions": legal_action_ids,
-        }
+    与 RLCard env ``_extract_state`` 对齐：``legal_actions`` 为 OrderedDict，
+    另附 ``raw_legal_actions``（RandomAgent / DMC 均依赖）。
+    ``agent_type`` 保留以兼容调用方，当前所有 agent 共用同一格式。
+    """
+    from collections import OrderedDict
 
+    _ = agent_type  # 预留：若未来 agent 格式分叉再分支
     return {
         "obs": obs_array,
-        "legal_actions": legal_action_ids,
+        "legal_actions": OrderedDict((action_id, None) for action_id in legal_action_ids),
+        "raw_legal_actions": list(legal_action_ids),
     }
