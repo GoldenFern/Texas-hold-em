@@ -85,3 +85,12 @@ GitHub Issues（`gh` CLI）；外部 PR 不作为 triage 入口。详见 `docs/a
 ### Domain docs
 
 单上下文布局：根目录 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。
+
+## Cursor Cloud specific instructions
+
+- 纯 Python 单进程应用，无数据库/Redis 等外部服务；依赖通过 `pip install -r requirements.txt` 安装（启动脚本已自动执行）。
+- 运行时统一用 `python3`（VM 无 `python` 别名）：`python3 main.py`（Web，`0.0.0.0:5000`）、`python3 main.py --cli --hands N`、`python3 -m pytest tests/ -v`。
+- 虽然 `环境.yml`/文档写的是 Python 3.13+，但 VM 自带 3.12.3 即可正常运行（代码用 `from __future__ import annotations`，全部测试通过）。
+- 无 lint/format/type-check 工具配置（无 ruff/flake8/black/mypy），仅有 `pytest`。
+- 测试中 `tests/test_llm_live.py` 的 5 个用例在未设置 `DEEPSEEK_API_KEY`/`THP_LLM_*` 等真实 API Key 时会自动 skip，属正常现象；核心游戏与规则 Bot 无需任何 LLM Key。
+- `pip` 会把 `pytest` 等脚本装到未加入 PATH 的 `~/.local/bin`；请用 `python3 -m pytest` 而非直接 `pytest`。
