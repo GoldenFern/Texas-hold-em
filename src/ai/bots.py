@@ -38,6 +38,7 @@ class BotStyle(Enum):
     HOT = "HOT"             # T=0.60  炎热
     CHAOS = "CHAOS"         # T=1.20  混沌
     LLM = "LLM"
+    RLCARD = "RLCARD"
 
 
 @dataclass
@@ -87,6 +88,11 @@ BOT_PROFILES: Dict[BotStyle, BotProfile] = {
         display_name="LLM",
         description="LLM 驱动。",
     ),
+    BotStyle.RLCARD: BotProfile(
+        style=BotStyle.RLCARD, temperature=0.15,
+        display_name="算无遗策",
+        description="RLCard 强化学习驱动。",
+    ),
 }
 
 # 风格显示名 -> BotStyle 映射
@@ -98,6 +104,7 @@ STYLE_IDIOM_MAP: Dict[str, BotStyle] = {
     "炎热 T=0.60": BotStyle.HOT,
     "混沌 T=1.20": BotStyle.CHAOS,
     "LLM": BotStyle.LLM,
+    "算无遗策": BotStyle.RLCARD,
 }
 
 
@@ -315,15 +322,23 @@ class BotFactory:
 
     @classmethod
     def create(cls, style: BotStyle, name: str = "", seed: int = 42,
-               temperature: float | None = None) -> BoltzmannBot:
+               temperature: float | None = None,
+               rlcard_config: dict | None = None) -> BoltzmannBot:
         """创建指定风格的 Boltzmann-EV Bot。
-        
+
         Args:
             temperature: 自定义温度（若 None 则使用风格预设值）。
+            rlcard_config: bot 级别的 RLCard 配置覆盖字典。
         """
         if style == BotStyle.LLM:
             from src.llm.llm_bot import LLMBot
             return LLMBot(name or "LLM", seed=seed)
+
+        if style == BotStyle.RLCARD:
+            from src.rlcard.rlcard_bot import RLCardBot
+            from src.rlcard.config import load_rlcard_config
+            rl_config = load_rlcard_config(bot_override=rlcard_config)
+            return RLCardBot(name or "RLCard", seed=seed, rlcard_config=rl_config)
 
         profile = BOT_PROFILES.get(style)
         if profile is None:
@@ -368,6 +383,15 @@ class BotFactory:
 
     @classmethod
     def list_styles(cls) -> List[BotProfile]:
-        return [p for s, p in BOT_PROFILES.items() if s != BotStyle.LLM]
+        styles: List[BotProfile] = []
+        for s, p in BOT_PROFILES.items():
+            if s == BotStyle.LLM:
+                continue
+            if s == BotStyle.RLCARD:
+                from src.rlcard import is_available
+                if not is_available():
+                    continue
+            styles.append(p)
+        return styles
 
 

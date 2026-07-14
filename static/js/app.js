@@ -3,15 +3,19 @@
  */
 
 // 机器人风格列表（value: BotStyle enum key, label: 显示名）
-const BOT_STYLES = [
-    { value: 'COLD',    label: '极冷 T=0.03',     temperature: 0.03 },
-    { value: 'COOL',    label: '偏冷 T=0.07',     temperature: 0.07 },
+// RLCARD 根据服务端能力动态添加
+const BASE_BOT_STYLES = [
+    { value: 'COLD',     label: '极冷 T=0.03',   temperature: 0.03 },
+    { value: 'COOL',     label: '偏冷 T=0.07',   temperature: 0.07 },
     { value: 'BALANCED', label: '均衡 T=0.15',   temperature: 0.15 },
-    { value: 'WARM',    label: '偏热 T=0.30',     temperature: 0.30 },
-    { value: 'HOT',     label: '炎热 T=0.60',     temperature: 0.60 },
-    { value: 'CHAOS',   label: '混沌 T=1.20',     temperature: 1.20 },
-    { value: 'LLM',     label: 'LLM',             temperature: 0.15 },
+    { value: 'WARM',     label: '偏热 T=0.30',   temperature: 0.30 },
+    { value: 'HOT',      label: '炎热 T=0.60',   temperature: 0.60 },
+    { value: 'CHAOS',    label: '混沌 T=1.20',   temperature: 1.20 },
+    { value: 'LLM',      label: 'LLM',           temperature: 0.15 },
 ];
+
+// 运行时 BOT_STYLES 列表（由 _loadCapabilities 填充）
+let BOT_STYLES = [...BASE_BOT_STYLES];
 
 // 默认机器人名字
 const DEFAULT_BOT_NAMES = ['极冷', '偏冷', '均衡', '偏热', '炎热', '混沌'];
@@ -26,8 +30,27 @@ const App = {
         this.socket = io();
         this._bindSocketEvents();
         this._bindUIEvents();
-        this._refreshBotRows();  // 生成默认 5 个机器人
+        this._loadCapabilities().then(() => {
+            this._refreshBotRows();  // 能力探针完成后刷新列表
+        });
         console.log('[App] 初始化完成');
+    },
+
+    /** 探测服务端可选能力并更新 BOT_STYLES */
+    _loadCapabilities() {
+        return fetch('/api/capabilities')
+            .then(r => r.json())
+            .then(caps => {
+                BOT_STYLES = [...BASE_BOT_STYLES];
+                if (caps.rlcard) {
+                    BOT_STYLES.push({ value: 'RLCARD', label: '算无遗策', temperature: 0.15 });
+                }
+                console.log('[App] 服务端能力:', caps);
+            })
+            .catch(e => {
+                console.warn('[App] 无法获取服务端能力，使用基础样式列表:', e);
+                BOT_STYLES = [...BASE_BOT_STYLES];
+            });
     },
 
     /** 根据对手数量刷新机器人行 */

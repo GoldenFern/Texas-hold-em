@@ -72,6 +72,39 @@ pip install python-dotenv        # .env 加载
 
 环境变量：`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `THP_LLM_*`（项目专用前缀）。
 
+## RLCard 依赖（可选）
+
+核心游戏无需 RLCard。启用 RLCard Bot 时按需安装：
+
+```bash
+pip install rlcard              # Phase A：RandomAgent（无需训练）
+pip install rlcard[torch]       # Phase B：DQN / DMC 训练与推理
+# 或：pip install -r requirements-rlcard.txt
+```
+
+模型工件放置在 `models/rlcard/`（`*.pth` / `*.tar` 已 gitignore）。
+环境变量：`THP_RLCARD_MODEL_PATH` 可覆盖默认模型路径。
+
+### 离线训练（Phase B）
+
+```bash
+# DQN（默认，较快产出 .pth）
+python scripts/train_rlcard.py --algorithm dqn --num-episodes 500
+
+# DMC（较慢，产出 .tar）
+python scripts/train_rlcard.py --algorithm dmc --total-frames 50000
+```
+
+训练在 RLCard `no-limit-holdem` 沙箱内自博弈，不使用镜像适配器；超参数与有效深度见 `config/rlcard_config.json`。
+
+### 对局中使用训练模型
+
+1. 将 `config/rlcard_config.json` 中 `agent_type` 设为 `"dqn"` 或 `"dmc"`，`model_path` 指向工件路径
+2. 或设置环境变量：`THP_RLCARD_MODEL_PATH=models/rlcard/nlh_dqn.pth`
+3. Web/CLI 创建 **单挑** RLCard Bot（1 人类 + 1 RLCard Bot）
+
+`bot_configs[].rlcard_config` 可 per-bot 覆盖上述字段。
+
 ## Agent skills
 
 ### Issue tracker
@@ -84,4 +117,4 @@ GitHub Issues（`gh` CLI）；外部 PR 不作为 triage 入口。详见 `docs/a
 
 ### Domain docs
 
-单上下文布局：根目录 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。
+多上下文布局：根目录 `CONTEXT-MAP.md` 指向 `CONTEXT.md` + `src/rlcard/CONTEXT.md`。详见 `docs/agents/domain.md`。

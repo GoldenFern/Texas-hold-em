@@ -191,3 +191,116 @@ class TestRoutesRoutesSetGameManager:
         # set 和 get 应在导入 events 后被自动调用
         from src.server.events import _game_manager
         assert get_game_manager() is _game_manager
+
+
+class TestCapabilities:
+    """Capabilities API 测试。"""
+
+    def test_capabilities_endpoint_registered(self) -> None:
+        _requires_flask()
+        from src.server.app import create_app
+        app = create_app()
+        rules = sorted(r.rule for r in app.url_map.iter_rules())
+        assert "/api/capabilities" in rules
+
+    def test_capabilities_response_shape(self) -> None:
+        _requires_flask()
+        from src.server.app import create_app
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        response = client.get("/api/capabilities")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert "rlcard" in data
+        assert "llm" in data
+        assert isinstance(data["rlcard"], bool)
+        assert isinstance(data["llm"], bool)
+
+    def test_new_game_rejects_multi_bot_rlcard(self) -> None:
+        """REST API 创建对局时，多 Bot RLCARD 配置返回 400。"""
+        _requires_flask()
+        from src.server.app import create_app
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        response = client.post("/api/game/new", json={
+            "player_name": "Hero",
+            "bots": [
+                {"style": "RLCARD", "name": "RLBot"},
+                {"style": "COOL", "name": "Bot2"},
+            ],
+        })
+        assert response.status_code == 400
+        data = response.get_json()
+        assert "error" in data
+        assert "仅支持单人对抗" in data["error"]
+
+
+class TestRLCardGameManager:
+    """RLCard create_game 验证测试。"""
+
+    def test_rlcard_heads_up_succeeds(self) -> None:
+        from src.server.events import GameManager
+        try:
+            import rlcard  # noqa: F401
+        except ModuleNotFoundError:
+            pytest.skip("rlcard 未安装")
+
+        mgr = GameManager()
+        mgr.create_game(
+            player_name="Hero",
+            bot_configs=[{"style": "RLCARD", "name": "RLBot"}],
+            starting_chips=1000,
+            small_blind=5,
+            big_blind=10,
+        )
+        assert mgr.game is not None
+        assert "RLBot" in mgr.bots
+
+    def test_rlcard_multi_bot_rejected(self) -> None:
+        from src.server.events import GameManager
+        try:
+            import rlcard  # noqa: F401
+        except ModuleNotFoundError:
+            pytest.skip("rlcard 未安装")
+
+        mgr = GameManager()
+        with pytest.raises(ValueError, match="仅支持单人对抗"):
+            mgr.create_game(
+                player_name="Hero",
+                bot_configs=[
+                    {"style": "RLCARD", "name": "RLBot"},
+                    {"style": "COOL", "name": "Bot2"},
+                ],
+            )
+
+    def test_rlcard_multi_bot_rejected_no_rlcard_installed(self) -> None:
+        """即使 rlcard 未安装，多 Bot RLCARD 配置也会先被 create_game 捕获并拒绝。"""
+        from src.server.events import GameManager
+        # 不检查 rlcard 是否安装
+        mgr = GameManager()
+        with pytest.raises(ValueError, match="仅支持单人对抗"):
+            mgr.create_game(
+                player_name="Hero",
+                bot_configs=[
+                    {"style": "RLCARD", "name": "RLBot"},
+                    {"style": "COOL", "name": "Bot2"},
+                ],
+            )
+
+    def test_rlcard_without_rlcard_installed_raises_on_factory(self) -> None:
+        """未安装 rlcard 时，单 Bot RLCARD 在 BotFactory.create() 阶段会抛出错误。"""
+        try:
+            import rlcard  # noqa: F401
+            pytest.skip("rlcard 已安装，跳过此测试")
+        except ModuleNotFoundError:
+            pass
+
+        from src.server.events import GameManager
+        mgr = GameManager()
+        with pytest.raises(Exception):
+            mgr.create_game(
+                player_name="Hero",
+                bot_configs=[{"style": "RLCARD", "name": "RLBot"}],
+            )
