@@ -93,10 +93,12 @@ class ResponseParser:
         if not action_str:
             logger.warning("JSON 中缺少 action/动作 字段")
             return None
-        action_str = action_str.strip().lower().replace(" ", "_")
-
-        if action_str not in cls._ACTION_MAP:
-            logger.warning("未知的动作类型: %s", action_str)
+        raw = action_str.strip().lower()
+        # 兼容 "all in" 与中文夹空格（如 "全 下"）两种写法
+        candidates = (raw, raw.replace(" ", "_"), raw.replace(" ", ""))
+        action_str = next((c for c in candidates if c in cls._ACTION_MAP), None)
+        if action_str is None:
+            logger.warning("未知的动作类型: %s", raw)
             return None
         action_type = cls._ACTION_MAP[action_str]
 
@@ -117,9 +119,13 @@ class ResponseParser:
         # 6. 合法性验证
         legal_actions = game.get_legal_actions(player)
         if action_type not in legal_actions:
-            # 特殊处理：LLM 返回 RAISE 但仅 BET 合法（current_bet == 0）
+            # RAISE 但仅 BET 合法（current_bet == 0）
             if action_type == ActionType.RAISE and ActionType.BET in legal_actions:
                 action_type = ActionType.BET
+            # FOLD 但可免费过牌（引擎禁止免费弃牌）→ 视为过牌
+            elif action_type == ActionType.FOLD and ActionType.CHECK in legal_actions:
+                action_type = ActionType.CHECK
+                amount = 0
             else:
                 logger.warning(
                     "非法动作: %s 不在合法列表 %s 中",
@@ -136,20 +142,20 @@ class ResponseParser:
             amount = max(min_raise, min(amount, max_bet))
             amount = min(amount, player.chips + player.current_bet)
 
-            is_all_in = amount >= player.chips + player.current_bet
             if amount <= 0:
                 logger.warning("金额无效: %d", amount)
                 return None
-        else:
-            is_all_in = amount >= player.chips + player.current_bet if amount > 0 else False
 
         # 8. 构造 Action
-        is_all_in_flag = is_all_in or amount >= player.chips + player.current_bet
+        is_all_in = (
+            action_type in (ActionType.BET, ActionType.RAISE, ActionType.CALL)
+            and amount >= player.chips + player.current_bet
+        )
         return Action(
             player_name=player.name,
             action_type=action_type,
             amount=amount,
-            is_all_in=is_all_in_flag,
+            is_all_in=is_all_in,
         )
 
     @staticmethod

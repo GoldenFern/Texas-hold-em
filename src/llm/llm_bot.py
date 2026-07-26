@@ -25,10 +25,8 @@ from src.llm.response_parser import ResponseParser
 
 logger = logging.getLogger(__name__)
 
-# 最大上下文手牌数（始终发送完整上下文）
-_MAX_CONTEXT_HANDS = 50
-# 固定 Max Tokens
-_FIXED_MAX_TOKENS = 100000
+# 上下文手牌窗口（近期摘要 + 累计统计,避免 prompt 膨胀）
+_MAX_CONTEXT_HANDS = 10
 
 
 class LLMBot(BoltzmannBot):
@@ -157,8 +155,15 @@ class LLMBot(BoltzmannBot):
                     )
                     return action
         except Exception as e:
-            logger.warning("LLM 调用失败: %s", e)
+            logger.warning("LLM 决策管道异常: %s", e)
 
+        # 失败路径:同样缓存上下文(含错误),调试面板不再隐藏失败
+        if self._chain_wrapper is not None and self._chain_wrapper.last_context:
+            self._last_llm_context = {
+                **self._chain_wrapper.last_context,
+                "parsed_action": "(解析失败或调用失败)",
+                "call_index": self.llm_decisions + self.rule_decisions + 1,
+            }
         return None
 
     # ================================================================
@@ -188,11 +193,9 @@ class LLMBot(BoltzmannBot):
                     stats[p.name]["showdown_hands"] = profile.showdown_hands[-3:]
             else:
                 stats[p.name] = {
-                    "vpip": 0.25,
-                    "pfr": 0.15,
-                    "aggression": 0.5,
-                    "classification": "未知（数据不足）",
+                    "classification": "未知（无观测数据,请勿依赖统计）",
                     "hands_played": 0,
+                    "is_default_prior": True,
                 }
         return stats
 
@@ -220,8 +223,15 @@ class LLMBot(BoltzmannBot):
     # 上下文管理接口（供 GameManager 调用）
     # ================================================================
 
-    def end_hand(self, won: bool = False, profit: int = 0) -> None:
-        self._context_manager.end_hand(won=won, profit=profit, reporter=None)
+    def end_hand(self, won: bool = False, profit: int = 0, reporter=None) -> None:
+        """一手结束时更新会话上下文。
+
+        Args:
+            won: 本手是否获胜。
+            profit: 本手净利润（可为负）。
+            reporter: 共享的 HandReporter（用于同步对手统计）。
+        """
+        self._context_manager.end_hand(won=won, profit=profit, reporter=reporter)
 
     @property
     def context_manager(self) -> ContextManager:
@@ -230,6 +240,14 @@ class LLMBot(BoltzmannBot):
     @property
     def last_llm_context(self) -> Dict[str, Any]:
         return self._last_llm_context
+
+    @property
+    def last_error_type(self) -> str:
+        """最近一次 LLM 调用的错误类型（空串表示成功）。"""
+        if self._chain_wrapper is None:
+            return "network"
+        err = self._chain_wrapper.last_error
+        return err.kind if err is not None else ""
 
     # ================================================================
     # 统计与调试

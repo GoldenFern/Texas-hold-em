@@ -23,7 +23,7 @@ class ProviderConfig:
     timeout_seconds: float = 60.0
     max_retries: int = 2
     temperature: float = 0.5
-    max_tokens: int = 100000
+    max_tokens: int = 4096
     reasoning_effort: str = ""  # "" = disabled, "high", "max"
 
 
@@ -150,8 +150,23 @@ def _find_project_root() -> Path:
     return Path.cwd()
 
 
+def _load_dotenv_once() -> None:
+    """加载项目根目录的 .env（存在且 python-dotenv 可用时）。"""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    env_path = _find_project_root() / ".env"
+    if env_path.is_file():
+        load_dotenv(env_path, override=False)
+
+
 def load_config(config_path: Optional[str] = None) -> LLMConfig:
-    """从 JSON 文件和环境变量加载 LLM 配置。
+    """从 .env、环境变量与 JSON 文件加载 LLM 配置。
+
+    优先级: 环境变量(含 .env) > config/llm_config.json > 默认值。
+    API Key 只从环境变量/.env 读取或由运行时显式传入,
+    不再持久化到 git 跟踪的 JSON 文件。
 
     Args:
         config_path: JSON 配置文件路径，默认查找 config/llm_config.json。
@@ -159,6 +174,7 @@ def load_config(config_path: Optional[str] = None) -> LLMConfig:
     Returns:
         LLMConfig 实例。
     """
+    _load_dotenv_once()
     config = LLMConfig()
 
     # 1. 尝试加载 JSON 配置文件
@@ -199,7 +215,7 @@ def load_config(config_path: Optional[str] = None) -> LLMConfig:
         base_url=base_url,
         timeout_seconds=timeout,
         temperature=float(_env("TEMPERATURE") or json_config.get("temperature", 0.5)),
-        max_tokens=100000,  # 固定 100k
+        max_tokens=int(_env("MAX_TOKENS") or json_config.get("max_tokens", 4096)),
         reasoning_effort=_env("REASONING_EFFORT") or json_config.get("reasoning_effort", ""),
     )
 
@@ -225,15 +241,40 @@ def save_config(config: LLMConfig, config_path: Optional[str] = None) -> None:
         "model": config.primary.model,
         "timeout_seconds": config.primary.timeout_seconds,
         "temperature": config.primary.temperature,
+        "max_tokens": config.primary.max_tokens,
         "reasoning_effort": config.primary.reasoning_effort,
         "commentary": {"enabled": config.enable_commentary},
         "advisor": {"enabled": config.enable_advisor},
     }
-    if config.primary.api_key:
-        json_config["api_key"] = config.primary.api_key
     if config.primary.base_url:
         json_config["base_url"] = config.primary.base_url
 
     os.makedirs(os.path.dirname(config_path), exist_ok=True)
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(json_config, f, indent=2, ensure_ascii=False)
+
+    # API Key 不入 git 跟踪的 JSON:写入项目根 .env（THP_LLM_API_KEY）
+    _write_api_key_to_dotenv(config.primary.api_key)
+
+
+def _write_api_key_to_dotenv(api_key: str) -> None:
+    """将 API Key 写入(或从中清除) .env 文件。
+
+    Args:
+        api_key: 新 Key;空串表示清除。
+    """
+    env_path = _find_project_root() / ".env"
+    lines: List[str] = []
+    if env_path.is_file():
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = [
+                ln for ln in f.read().splitlines()
+                if not ln.startswith("THP_LLM_API_KEY=")
+            ]
+    if api_key:
+        lines.append(f"THP_LLM_API_KEY={api_key}")
+        os.environ["THP_LLM_API_KEY"] = api_key
+    else:
+        os.environ.pop("THP_LLM_API_KEY", None)
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + ("\n" if lines else ""))

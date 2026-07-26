@@ -400,9 +400,11 @@ class GameManager:
 
             game.apply_action(action)
             if llm_status is not None:
-                self._emit("llm_status", {
-                    "player": snap_player_name, "status": llm_status,
-                })
+                payload = {"player": snap_player_name, "status": llm_status}
+                error_type = getattr(bot, "last_error_type", "")
+                if llm_status != "ok" and error_type:
+                    payload["error_type"] = error_type
+                self._emit("llm_status", payload)
             self._broadcast_state()
         return False
 
@@ -457,17 +459,25 @@ class GameManager:
                     if cards_str:
                         showdown_hands[pname] = cards_str
 
+        # 本手每人实际投入 = 开局筹码 - 终局筹码 + 赢得（快照首末帧）
+        spent_by_player = {}
+        snapshots = getattr(history, "step_snapshots", None) if history else None
+        if snapshots and len(snapshots) >= 2:
+            first = {p["name"]: p["chips"] for p in snapshots[0].get("players", [])}
+            last = {p["name"]: p["chips"] for p in snapshots[-1].get("players", [])}
+            for pname in history.players:
+                won_amt = history.winners.get(pname, 0)
+                spent_by_player[pname] = (
+                    first.get(pname, 0) - last.get(pname, 0) + won_amt
+                )
+
         for name, bot in self.bots.items():
             if not self._is_llm_bot(bot):
                 continue
             won = name in history.winners if history else False
-            # 使用净利润（赢得 - 投入）
             gross = history.winners.get(name, 0) if history and history.winners else 0
-            # 从 player_stats 获取该手实际投入
-            player_stats = self.reporter.player_stats.get(name)
-            if player_stats and player_stats.hands_played > 0:
-                net = gross  # reporter 已追踪累计，这里传 gross 供上下文参考
-            profit = gross  # ContextManager 内部自行处理
+            # 净利润 = 赢得 - 本手投入（输家为负,模型能看到亏损了）
+            profit = gross - spent_by_player.get(name, 0)
 
             bot.context_manager.end_hand(won=won, profit=profit, reporter=self.reporter)
 

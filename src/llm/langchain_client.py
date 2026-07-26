@@ -28,6 +28,39 @@ logger = logging.getLogger(__name__)
 _TRAFFIC_LOGGER = logging.getLogger("src.llm.traffic")
 
 
+class LLMError(Exception):
+    """带类型的 LLM 调用错误。
+
+    Attributes:
+        kind: auth | rate_limit | timeout | parse | network | unknown。
+        detail: 原始错误信息。
+    """
+
+    def __init__(self, kind: str, detail: str) -> None:
+        super().__init__(f"[{kind}] {detail}")
+        self.kind = kind
+        self.detail = detail
+
+
+def classify_llm_exception(e: Exception) -> str:
+    """按异常内容归类错误类型（供 llm_status.error_type 使用）。"""
+    name = type(e).__name__.lower()
+    text = f"{name}: {e}".lower()
+    if any(k in text for k in ("401", "unauthorized", "authentication",
+                               "invalid api key", "api key", "forbidden", "403")):
+        return "auth"
+    if any(k in text for k in ("429", "rate limit", "ratelimit", "quota")):
+        return "rate_limit"
+    if any(k in text for k in ("timeout", "timed out")):
+        return "timeout"
+    if any(k in text for k in ("json", "parse", "validation", "pydantic")):
+        return "parse"
+    if any(k in text for k in ("connection", "network", "dns", "unreachable",
+                               "ssl", "proxy")):
+        return "network"
+    return "unknown"
+
+
 # ================================================================
 # Pydantic 输出模型
 # ================================================================
@@ -162,13 +195,17 @@ def create_chat_model(config: ProviderConfig) -> Any:
             raise ImportError(
                 "langchain-anthropic 未安装，请运行: pip install langchain-anthropic"
             )
-        return ChatAnthropic(
-            model=config.model,
-            api_key=config.api_key or None,
-            temperature=config.temperature,
-            max_tokens=config.max_tokens,
-            timeout=config.timeout_seconds,
-        )
+        kwargs: Dict[str, Any] = {
+            "model": config.model,
+            "api_key": config.api_key or None,
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "timeout": config.timeout_seconds,
+            "max_retries": config.max_retries,
+        }
+        if config.base_url:
+            kwargs["base_url"] = config.base_url
+        return ChatAnthropic(**kwargs)
 
     if provider == "ollama":
         try:
@@ -207,6 +244,7 @@ def create_chat_model(config: ProviderConfig) -> Any:
             "api_key": config.api_key or "placeholder",
             "max_tokens": config.max_tokens,
             "timeout": config.timeout_seconds,
+            "max_retries": config.max_retries,
         }
         if config.base_url:
             kwargs["base_url"] = config.base_url
@@ -216,7 +254,10 @@ def create_chat_model(config: ProviderConfig) -> Any:
         if effort and effort != "disabled":
             kwargs["reasoning_effort"] = effort
             kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
-            # 思考模式不支持 temperature，不设置
+            logger.info(
+                "思考模式已启用(effort=%s), temperature=%s 被忽略",
+                effort, config.temperature,
+            )
         else:
             kwargs["temperature"] = config.temperature
 
@@ -395,6 +436,8 @@ class LCChainWrapper:
 
         # 最近一次调用的上下文（用于前端调试面板）
         self._last_context: Dict[str, Any] = {}
+        # 最近一次错误（None 表示上次调用成功）
+        self.last_error: Optional[LLMError] = None
 
     def generate(
         self,
@@ -422,10 +465,28 @@ class LCChainWrapper:
             result = self._chain.invoke(variables)
         except Exception as e:
             latency = time.perf_counter() - start
-            self._traffic.on_llm_end(f"ERROR: {e}", 0, 0)
-            logger.warning("LangChain 调用失败 (%s/%s): %s", self.config.provider, self.config.model, e)
+            kind = classify_llm_exception(e)
+            self.last_error = LLMError(kind, str(e))
+            self._traffic.on_llm_end(f"ERROR[{kind}]: {e}", 0, 0)
+            logger.warning(
+                "LangChain 调用失败 (%s/%s) [%s]: %s",
+                self.config.provider, self.config.model, kind, e,
+            )
+            # 失败同样缓存上下文,调试面板不再隐藏失败调用
+            self._last_context = {
+                "provider": self.config.provider,
+                "model": self.config.model,
+                "system_prompt": system_prompt_text,
+                "user_prompt": user_prompt_text,
+                "raw_response": "",
+                "error": f"[{kind}] {e}",
+                "latency_seconds": round(latency, 3),
+                "input_tokens": 0,
+                "output_tokens": 0,
+            }
             return None
 
+        self.last_error = None
         latency = time.perf_counter() - start
 
         # 提取文本
@@ -494,11 +555,3 @@ class LCChainWrapper:
             "total_output_tokens": self._total_output_tokens,
         }
 
-    def update_temperature(self, temperature: float) -> None:
-        """动态更新 temperature（用于关键决策）。"""
-        self.config.temperature = temperature
-        # 直接在底层 model 上修改 temperature
-        if hasattr(self._chain, "middle") and len(self._chain.middle) > 0:
-            model = self._chain.middle[0]
-            if hasattr(model, "temperature"):
-                model.temperature = temperature

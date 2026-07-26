@@ -19,7 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.engine.card import Card, Cards
 from src.engine.game import GameState
 from src.engine.player import Player
-from src.utils._card_helpers import detect_draws
+from src.utils._card_helpers import count_outs
 from src.utils.constants import ActionType, GamePhase, PlayerStatus
 
 
@@ -34,19 +34,15 @@ class PromptBuilder:
 
     # 阶段中文名
     _PHASE_NAMES: Dict[GamePhase, str] = {
+        GamePhase.WAITING: "等待开始",
         GamePhase.PRE_FLOP: "翻牌前",
         GamePhase.FLOP: "翻牌",
         GamePhase.TURN: "转牌",
         GamePhase.RIVER: "河牌",
+        GamePhase.SHOWDOWN: "摊牌",
+        GamePhase.FINISHED: "已结束",
     }
 
-    # 对手分类中文名
-    _CLASSIFICATION_CN: Dict[str, str] = {
-        "岩石 (Rock)": "岩石",
-        "紧凶 (TAG)": "紧凶",
-        "松凶 (LAG)": "松凶",
-        "跟注站 (Calling Station)": "跟注站",
-    }
 
     @staticmethod
     def _get_position_name(player: Player, game: GameState) -> str:
@@ -112,7 +108,7 @@ class PromptBuilder:
             "示例 2：面对进攻的听牌\n"
             "  你在 K♦ 9♠ 2♥ 的翻牌面持有 7♠ 8♠，面对紧凶对手 2/3 底池的持续下注。"
             "你有一个卡顺听牌（约 17% 胜率），底池赔率需要约 28% 胜率。\n"
-            "  → 动作：弃牌。理由：没有合适的底池赔率，位置不利且隐含赔率有限。\n\n"
+            "  → 动作：弃牌。理由：胜率低于底池赔率要求，且位置不利。\n\n"
             "示例 3：河牌价值下注\n"
             "  你在干燥牌面持有顶对好踢脚。对手（跟注站类型）已经过牌。"
             "跟注站跟注范围过宽——你应该比正常情况更大的价值下注。\n"
@@ -120,7 +116,7 @@ class PromptBuilder:
             "规则：\n"
             "- 只能从列出的合法动作中选择。\n"
             "- 下注/加注金额必须在最小加注和最大下注之间。\n"
-            "- 综合考虑底池赔率、隐含赔率、位置、手牌强度、对手范围和筹码深度。\n"
+            "- 综合考虑底池赔率、位置、手牌强度、对手范围和筹码深度。\n"
             "- 在 JSON 输出中包含结构化的「分析」字段，展示你的推理过程。\n"
             "- 只回复一个合法的 JSON 对象，不要使用 markdown 代码块，不要有额外文字。"
         )
@@ -188,22 +184,26 @@ class PromptBuilder:
 
         # 底池赔率
         if to_call > 0:
-            required = round(to_call / (game.pot.total + to_call) * 100, 1)
-            pot_odds = round(game.pot.total / to_call, 1)
-            sections.append(f"底池赔率: 需要 {required}% 胜率才能跟注（赔率比: {pot_odds}:1）")
+            from src.utils.poker_math import pot_odds as _po
+            required = round(_po(to_call, game.pot.total) * 100, 1)
+            ratio = round(game.pot.total / to_call, 1)
+            sections.append(f"底池赔率: 需要 {required}% 胜率才能跟注（赔率比: {ratio}:1）")
         else:
             sections.append("底池赔率: 免费过牌")
 
-        # 听牌检测
+        # 听牌检测（含 outs 计数）
         if game.phase != GamePhase.PRE_FLOP and len(game.community_cards) >= 3:
-            flush_draw, straight_draw = cls._detect_draws(player.hole_cards, game.community_cards)
+            info = count_outs(player.hole_cards, game.community_cards)
             draw_parts = []
-            if flush_draw:
+            if info.flush_draw:
                 draw_parts.append("同花听牌")
-            if straight_draw:
-                draw_parts.append("顺子听牌")
+            if info.straight_draw == "oesd":
+                draw_parts.append("两头顺听牌")
+            elif info.straight_draw == "gutshot":
+                draw_parts.append("卡顺听牌")
             if draw_parts:
-                sections.append(f"听牌: {'、'.join(draw_parts)}")
+                joined = "、".join(draw_parts)
+                sections.append(f"听牌: {joined}（补牌 outs: {info.outs} 张）")
 
         # === 位置 ===
         sections.append("")
@@ -248,6 +248,8 @@ class PromptBuilder:
             if opponent_stats and p.name in opponent_stats:
                 stats = opponent_stats[p.name]
                 stat_parts = []
+                if stats.get("is_default_prior"):
+                    stat_parts.append("[无观测数据]")
                 if "vpip" in stats:
                     stat_parts.append(f"入池率:{stats['vpip']:.0%}")
                 if "pfr" in stats:
@@ -272,8 +274,13 @@ class PromptBuilder:
         sections.append("")
         sections.append("=== 本轮动作 ===")
         if game.actions_this_round:
+            action_cn = {"FOLD": "弃牌", "CHECK": "过牌", "CALL": "跟注",
+                         "BET": "下注", "RAISE": "加注"}
             for action in game.actions_this_round:
-                sections.append(f"  {repr(action)}")
+                name = action_cn.get(action.action_type.name, action.action_type.name)
+                amount_str = f" ${action.amount}" if action.amount > 0 else ""
+                all_in_str = "（全下）" if action.is_all_in else ""
+                sections.append(f"  {action.player_name}: {name}{amount_str}{all_in_str}")
         else:
             sections.append("  （尚无动作——你是第一个行动）")
 
@@ -290,9 +297,9 @@ class PromptBuilder:
             sections.append("")
             sections.append("=== 下注尺度参考 ===")
             sections.append(f"  底池: ${pot_total}")
-            sections.append(f"  小注（1/3 底池 = ${pot_total // 3}）：范围下注、干燥牌面持续下注")
-            sections.append(f"  中注（1/2 底池 = ${pot_total // 2}）：标准价值下注")
-            sections.append(f"  大注（2/3 底池 = ${pot_total * 2 // 3}）：极化范围、保护手牌")
+            sections.append(f"  小注（1/3 底池 ≈ ${max(1, round(pot_total / 3))}）：范围下注、干燥牌面持续下注")
+            sections.append(f"  中注（1/2 底池 ≈ ${max(1, round(pot_total / 2))}）：标准价值下注")
+            sections.append(f"  大注（2/3 底池 ≈ ${max(1, round(pot_total * 2 / 3))}）：极化范围、保护手牌")
             sections.append(f"  超池（1x+ 底池 = ${pot_total}+）：极端极化")
 
         return "\n".join(sections)
@@ -404,11 +411,6 @@ class PromptBuilder:
         if not cards:
             return "无"
         return " ".join(c.short_str for c in cards)
-
-    @staticmethod
-    def _detect_draws(hole_cards: Cards, community_cards: Cards) -> tuple:
-        """检测听牌（委托共享实现）。"""
-        return detect_draws(hole_cards, community_cards)
 
     @staticmethod
     def _format_legal_actions(
