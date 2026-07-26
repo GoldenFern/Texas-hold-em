@@ -126,6 +126,22 @@ class HandEvaluator:
     # ---- 公开 API ----
 
     @staticmethod
+    def evaluate_score(cards: Sequence[Card]) -> int:
+        """快速评估：返回 Treys 分数（1–7462，越小越强）。
+
+        单次 Treys 查表调用直接处理 5–7 张牌，供蒙特卡洛热循环使用；
+        需要完整 HandResult（牌型/踢脚）时用 evaluate()。
+
+        Args:
+            cards: 5–7 张牌。
+
+        Returns:
+            Treys 分数，越小代表牌力越强。
+        """
+        treys_cards = [HandEvaluator._to_treys(c) for c in cards]
+        return _treys.evaluate(treys_cards[:2], treys_cards[2:])
+
+    @staticmethod
     def evaluate(cards: Sequence[Card]) -> HandResult:
         """从序列中的所有牌中选出最佳 5 张牌型。
 

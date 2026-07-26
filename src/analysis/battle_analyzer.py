@@ -10,14 +10,34 @@
 from __future__ import annotations
 
 import random
-from typing import Dict, List, Optional, Tuple
+import zlib
+from collections import OrderedDict
+from typing import Dict, List, Tuple
 
-from src.engine.card import Card, Cards
+from treys import Evaluator as _TreysEvaluator
+
+from src.engine.card import Cards
 from src.engine.game import GameState
 from src.engine.hand import HandEvaluator
 from src.engine.player import Player
-from src.utils._card_helpers import all_cards, random_hand
-from src.utils.constants import HandRank, Rank, Suit
+from src.utils._card_helpers import treys_ids, treys_pool
+from src.utils.constants import HandRank
+from src.utils.poker_math import mc_ci95, pot_odds
+
+_treys = _TreysEvaluator()
+
+# Treys rank class (1–9) -> 项目 HandRank
+_TREYS_CLASS_TO_HANDRANK: Dict[int, HandRank] = {
+    1: HandRank.STRAIGHT_FLUSH,
+    2: HandRank.FOUR_OF_A_KIND,
+    3: HandRank.FULL_HOUSE,
+    4: HandRank.FLUSH,
+    5: HandRank.STRAIGHT,
+    6: HandRank.THREE_OF_A_KIND,
+    7: HandRank.TWO_PAIR,
+    8: HandRank.ONE_PAIR,
+    9: HandRank.HIGH_CARD,
+}
 
 # Benchmark 确定的模拟次数（由 scripts/benchmark_sim.py 生成）
 try:
@@ -37,6 +57,8 @@ class BattleAnalyzer:
       - 底池财务 (pot_financials)
     """
 
+    _CACHE_SIZE = 256
+
     def __init__(
         self,
         preflop_sims: int = M_PREFLOP,
@@ -46,6 +68,10 @@ class BattleAnalyzer:
         self.preflop_sims = preflop_sims
         self.postflop_sims = postflop_sims
         self._rng = random.Random(seed)
+        # MC 结果按 (手牌, 公共牌, 对手数, 次数) 缓存——赔率/财务每次现算
+        self._mc_cache: "OrderedDict[tuple, Tuple[Dict[str, float], List[dict]]]" = (
+            OrderedDict()
+        )
 
     def analyze(
         self,
@@ -60,17 +86,6 @@ class BattleAnalyzer:
         每次调用根据输入状态生成确定性种子重置 RNG，
         保证相同局面下分析结果稳定不抖动。
         """
-        # 确定性种子：基于手牌 + 公共牌 + 对手数 + 跟注额
-        # 跟注额可能在同一轮下注中变化，但 check 不会改变它
-        to_call = max(0, game.current_bet - player.current_bet)
-        state_key = (
-            tuple(c.short_str for c in sorted(hole_cards, key=lambda c: c.short_str)),
-            tuple(c.short_str for c in sorted(community_cards, key=lambda c: c.short_str)),
-            active_opponent_count,
-            to_call,
-        )
-        self._rng = random.Random(hash(state_key) & 0x7FFFFFFF)
-
         n_community = len(community_cards)
 
         # 河牌：全部已知，直接评估
@@ -92,8 +107,8 @@ class BattleAnalyzer:
                 "sim_count": 0,
             }
 
-        # 单次循环同时收集牌型 + 排名
-        hand_type_probs, ranking_dist = self._run_monte_carlo(
+        # 单次循环同时收集牌型 + 排名（结果按状态缓存）
+        hand_type_probs, ranking_dist = self._mc_cached(
             hole_cards, community_cards, active_opponent_count, num_sims
         )
 
@@ -111,7 +126,41 @@ class BattleAnalyzer:
             "sim_count": num_sims,
         }
 
-    # ---- 蒙特卡洛模拟（单循环） ----
+    # ---- 蒙特卡洛模拟（单循环，Treys 整数热路径） ----
+
+    def _mc_cached(
+        self,
+        hole_cards: Cards,
+        community: Cards,
+        opponent_count: int,
+        num_sims: int,
+    ) -> Tuple[Dict[str, float], List[dict]]:
+        """带 LRU 缓存与确定性种子的 MC 入口。
+
+        种子由状态派生（zlib.crc32，跨进程可复现），同一局面
+        重复调用直接命中缓存。
+        """
+        key = (
+            tuple(sorted(c.short_str for c in hole_cards)),
+            tuple(sorted(c.short_str for c in community)),
+            opponent_count,
+            num_sims,
+        )
+        cached = self._mc_cache.get(key)
+        if cached is not None:
+            self._mc_cache.move_to_end(key)
+            return cached
+
+        seed = zlib.crc32(repr(key).encode("utf-8"))
+        rng = random.Random(seed)
+        result = self._run_monte_carlo(
+            hole_cards, community, opponent_count, num_sims, rng
+        )
+
+        self._mc_cache[key] = result
+        if len(self._mc_cache) > self._CACHE_SIZE:
+            self._mc_cache.popitem(last=False)
+        return result
 
     def _run_monte_carlo(
         self,
@@ -119,86 +168,89 @@ class BattleAnalyzer:
         community: Cards,
         opponent_count: int,
         num_sims: int,
+        rng: random.Random,
     ) -> Tuple[Dict[str, float], List[dict]]:
         """执行蒙特卡洛模拟，同时收集牌型概率和排名分布律。
 
-        使用 equity share 处理平局：若 Hero 与 N 个对手平分，
-        Hero 的 equity = 1/(N+1)，不再将平局计为完整获胜。
+        热循环全程使用 Treys 整数与单次查表调用；转牌圈只剩一张
+        未知公共牌时，对全部剩余河牌做精确枚举以降低方差。
 
-        Returns:
-            (hand_type_probs, ranking_distribution)
+        平局按 equity share 处理：与 k 个对手平分时 Hero 的
+        equity 为 1/(k+1)。
         """
-        # 排除已知牌
-        excluded: Cards = list(hole_cards) + list(community)
+        hero = treys_ids(hole_cards)
+        board_known = treys_ids(community)
+        pool = treys_pool(list(hole_cards) + list(community))
+        needed = 5 - len(board_known)
 
-        # 初始化计数器
-        hand_type_counts = {rank: 0 for rank in HandRank}
-        rank_counts: Dict[int, int] = {}  # rank_position -> count
-        equity_sum: float = 0.0  # 累计 equity share（处理平局）
+        hand_type_counts: Dict[HandRank, int] = {rank: 0 for rank in HandRank}
+        rank_counts: Dict[int, int] = {}
+        equity_sum = 0.0
+        total_outcomes = 0
 
-        needed = 5 - len(community)
+        evaluate = _treys.evaluate
+        get_class = _treys.get_rank_class
 
-        for _ in range(num_sims):
-            # 随机发 N 个对手手牌
-            current_excluded: Cards = list(excluded)
-            opponent_hands: List[Cards] = []
-            for _ in range(opponent_count):
-                opp = random_hand(self._rng, current_excluded)
-                opponent_hands.append(opp)
-                current_excluded.extend(opp)
+        # 转牌圈精确枚举河牌：外层抽对手，内层遍历全部剩余牌
+        enumerate_river = needed == 1 and opponent_count > 0
+        outer = max(1, num_sims // max(1, len(pool) - 2 * opponent_count))             if enumerate_river else num_sims
 
-            # 随机补全公共牌
-            excluded_str = {c.short_str for c in current_excluded}
-            available = [c for c in all_cards() if c.short_str not in excluded_str]
-            sim_board = list(community) + self._rng.sample(available, needed)
+        for _ in range(outer):
+            drawn = rng.sample(pool, 2 * opponent_count + (0 if enumerate_river else needed))
+            opp_hands = [
+                drawn[2 * i:2 * i + 2] for i in range(opponent_count)
+            ]
 
-            # 评估 Hero 手牌
-            hero_result = HandEvaluator.evaluate(hole_cards + sim_board)
-            hand_type_counts[hero_result.hand_rank] += 1
+            if enumerate_river:
+                drawn_set = set(drawn)
+                rivers = [t for t in pool if t not in drawn_set]
+                boards = [board_known + [rv] for rv in rivers]
+            else:
+                boards = [board_known + drawn[2 * opponent_count:]]
 
-            # 评估所有对手手牌，确定 Hero 排名和 equity 份额
-            hero_score = hero_result.score
-            better_count = 0  # 严格强于 Hero 的对手数
-            tied_count = 0     # 与 Hero 平局的对手数（不含自己）
-            for opp_hand in opponent_hands:
-                opp_result = HandEvaluator.evaluate(opp_hand + sim_board)
-                if opp_result.score > hero_score:
-                    better_count += 1
-                elif opp_result.score == hero_score:
-                    tied_count += 1
+            for board in boards:
+                hero_score = evaluate(hero, board)
+                hand_type_counts[
+                    _TREYS_CLASS_TO_HANDRANK[get_class(hero_score)]
+                    if hero_score != 1 else HandRank.ROYAL_FLUSH
+                ] += 1
 
-            rank = better_count + 1  # 排名（平局共享此排名）
-            rank_counts[rank] = rank_counts.get(rank, 0) + 1
+                better = 0
+                tied = 0
+                for opp in opp_hands:
+                    opp_score = evaluate(opp, board)
+                    if opp_score < hero_score:  # Treys 分数越小越强
+                        better += 1
+                    elif opp_score == hero_score:
+                        tied += 1
 
-            # equity share：底池按 1/(1 + tied_count) 分配给每位平局者
-            if better_count == 0:
-                equity_sum += 1.0 / (1.0 + tied_count)
-            # else: equity = 0（有对手严格更强）
+                rank_counts[better + 1] = rank_counts.get(better + 1, 0) + 1
+                if better == 0:
+                    equity_sum += 1.0 / (1.0 + tied)
+                total_outcomes += 1
 
-        # 转换为概率
+        n = max(1, total_outcomes)
         hand_type_probs = {
-            rank.display_name: round(hand_type_counts[rank] / num_sims * 100, 1)
+            rank.display_name: round(hand_type_counts[rank] / n * 100, 1)
             for rank in reversed(HandRank)
         }
 
-        # 完整排名分布（1 到 opponent_count+1，缺口概率为 0）
         max_rank = opponent_count + 1
         ranking_distribution = []
         for r in range(1, max_rank + 1):
-            count = rank_counts.get(r, 0)
-            prob = round(count / num_sims * 100, 1)
             ranking_distribution.append({
                 "rank": r,
                 "desc": f"第{r}名",
-                "prob": prob,
+                "prob": round(rank_counts.get(r, 0) / n * 100, 1),
             })
 
-        # 将平均 equity 存入 ranking_distribution 的第一个条目（供 _calc_odds_ev 使用）
-        avg_equity = equity_sum / num_sims if num_sims > 0 else 0.0
+        # equity share 附加条目（rank=-1 标记），并附带样本量供 CI 计算
+        avg_equity = equity_sum / n
         ranking_distribution.append({
-            "rank": -1,  # 标记：equity 数据
+            "rank": -1,
             "desc": "equity",
             "prob": round(avg_equity * 100, 1),
+            "samples": total_outcomes,
         })
 
         return hand_type_probs, ranking_distribution
@@ -222,7 +274,7 @@ class BattleAnalyzer:
 
         # 排名分布律：如果还有对手，用 MC 模拟确定 vs 对手随机手牌的排名
         if active_opponent_count > 0:
-            _, ranking_dist = self._run_monte_carlo(
+            _, ranking_dist = self._mc_cached(
                 hole_cards, community_cards, active_opponent_count, self.postflop_sims
             )
         else:
@@ -256,9 +308,11 @@ class BattleAnalyzer:
         # 提取 equity share（由 _run_monte_carlo 存入 ranking_distribution 尾部）
         equity_share = 0.0
         win_rate_display = 0.0
+        mc_samples = 0
         for entry in ranking_distribution:
             if entry.get("rank") == -1:  # equity 标记
                 equity_share = entry["prob"] / 100.0
+                mc_samples = entry.get("samples", 0)
             elif entry.get("rank") == 1:
                 win_rate_display = entry["prob"] / 100.0  # 纯显示用
 
@@ -276,7 +330,7 @@ class BattleAnalyzer:
         # 底池赔率
         if to_call > 0:
             pot_odds_ratio = round(pot_total / to_call, 2)
-            required_equity = round(to_call / (pot_total + to_call) * 100, 1)
+            required_equity = round(pot_odds(to_call, pot_total) * 100, 1)
         else:
             pot_odds_ratio = 0.0
             required_equity = 0.0
@@ -296,6 +350,7 @@ class BattleAnalyzer:
         return {
             "win_rate": round(win_rate_display * 100, 1),
             "equity": round(equity_share * 100, 1),
+            "ci_95": mc_ci95(equity_share, mc_samples),
             "pot_odds_ratio": pot_odds_ratio,
             "required_equity": required_equity,
             "ev": ev,
