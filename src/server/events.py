@@ -116,6 +116,12 @@ class GameManager:
                     name=bot_name, chips=starting_chips, seat=i + 1,
                 ))
 
+            # 注入共享对手模型（基于 reporter 统计的逐对手 F_max/λ 估计）
+            from src.ai.opponent_model import OpponentModel
+            opponent_model = OpponentModel(self.reporter)
+            for bot in self.bots.values():
+                bot.set_opponent_model(opponent_model)
+
             bs_map = {
                 "no_limit": BettingStructure.NO_LIMIT,
                 "pot_limit": BettingStructure.POT_LIMIT,

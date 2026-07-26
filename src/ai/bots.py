@@ -14,11 +14,13 @@
 
 from __future__ import annotations
 
+import json
 import math
+import os
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.ai.strategy import preflop_hand_strength
 from src.analysis.battle_analyzer import BattleAnalyzer
@@ -42,52 +44,100 @@ class BotStyle(Enum):
 
 @dataclass
 class BotProfile:
-    """机器人参数配置——仅温度。"""
+    """机器人参数配置 —— 温度 + Boltzmann 报告的对手响应参数。"""
 
     style: BotStyle
-    temperature: float  # BB 单位
+    temperature: float          # softmax 温度系数 (T = τ·pot)
     display_name: str = ""
     description: str = ""
+    F_max: float = 0.68         # 对手弃牌率上限
+    lambda_fold: float = 1.8    # fold equity 饱和速率
+    nu: float = 1.2             # 跟注范围收紧速率
+    q_delta: float = 0.15       # 被跟注后的胜率折减: q_inf = max(0.05, w - q_delta)
 
 
-# 温度预设（pot 标度系数；T = coefficient * pot, 单位 BB）
-BOT_PROFILES: Dict[BotStyle, BotProfile] = {
+# 内置默认参数（docs/boltzmann_report.tex 实用参数建议）；
+# config/bot_profiles.json 存在时覆盖同名字段
+_BUILTIN_PROFILES: Dict[BotStyle, BotProfile] = {
     BotStyle.COLD: BotProfile(
         style=BotStyle.COLD, temperature=0.03,
         display_name="极冷 T=0.03",
         description="近乎确定性，只选 EV 最高的动作。",
+        F_max=0.75, lambda_fold=2.0, nu=2.2, q_delta=0.30,
     ),
     BotStyle.COOL: BotProfile(
         style=BotStyle.COOL, temperature=0.07,
         display_name="偏冷 T=0.07",
         description="明显偏好高 EV 动作，中强牌入池。",
+        F_max=0.72, lambda_fold=2.0, nu=1.5, q_delta=0.20,
     ),
     BotStyle.BALANCED: BotProfile(
         style=BotStyle.BALANCED, temperature=0.15,
         display_name="均衡 T=0.15",
         description="温和均衡，EV 驱动决策。",
+        F_max=0.68, lambda_fold=1.8, nu=1.2, q_delta=0.15,
     ),
     BotStyle.WARM: BotProfile(
         style=BotStyle.WARM, temperature=0.30,
         display_name="偏热 T=0.30",
         description="EV 差异被部分抹平，更爱探索和施压。",
+        F_max=0.62, lambda_fold=1.5, nu=1.0, q_delta=0.10,
     ),
     BotStyle.HOT: BotProfile(
         style=BotStyle.HOT, temperature=0.60,
         display_name="炎热 T=0.60",
         description="Fold 的 EV 优势不明显，几乎不弃牌。",
+        F_max=0.55, lambda_fold=1.0, nu=0.6, q_delta=0.05,
     ),
     BotStyle.CHAOS: BotProfile(
         style=BotStyle.CHAOS, temperature=1.20,
         display_name="混沌 T=1.20",
         description="近乎均匀随机，无视牌力。",
+        F_max=0.50, lambda_fold=0.8, nu=0.3, q_delta=0.05,
     ),
     BotStyle.LLM: BotProfile(
         style=BotStyle.LLM, temperature=0.15,
         display_name="LLM",
         description="LLM 驱动。",
+        F_max=0.68, lambda_fold=1.8, nu=1.2, q_delta=0.15,
     ),
 }
+
+_PROFILES_CONFIG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "config", "bot_profiles.json",
+)
+
+
+def _load_profiles() -> Dict[BotStyle, BotProfile]:
+    """加载风格参数表：内置默认 + config/bot_profiles.json 字段覆盖。"""
+    profiles = dict(_BUILTIN_PROFILES)
+    try:
+        with open(_PROFILES_CONFIG, "r", encoding="utf-8") as f:
+            raw = json.load(f).get("profiles", {})
+    except (OSError, json.JSONDecodeError):
+        return profiles
+
+    for style_name, overrides in raw.items():
+        try:
+            style = BotStyle(style_name)
+        except ValueError:
+            continue
+        base = profiles[style]
+        profiles[style] = BotProfile(
+            style=style,
+            temperature=float(overrides.get("temperature", base.temperature)),
+            display_name=base.display_name,
+            description=base.description,
+            F_max=float(overrides.get("F_max", base.F_max)),
+            lambda_fold=float(overrides.get("lambda_fold", base.lambda_fold)),
+            nu=float(overrides.get("nu", base.nu)),
+            q_delta=float(overrides.get("q_delta", base.q_delta)),
+        )
+    return profiles
+
+
+BOT_PROFILES: Dict[BotStyle, BotProfile] = _load_profiles()
 
 # 风格显示名 -> BotStyle 映射
 STYLE_IDIOM_MAP: Dict[str, BotStyle] = {
@@ -112,35 +162,22 @@ class BoltzmannBot:
         self, name: str, profile: BotProfile,
         seed: int = 42,
         postflop_sims: int = 200,
-        bet_k_value: float = 0.6,
-        bet_k_bluff: float = 0.65,
-        bet_cap_frac: float = 0.75,
-        bet_strategy: str = "separated",
-        # 新模型参数：对手建模
-        F_max: float = 0.75,
-        lambda_fold: float = 2.0,
-        nu: float = 1.0,
-        q_inf_ratio: float = 0.5,
     ) -> None:
         self.name = name
         self.profile = profile
         self.rng = random.Random(seed)
-        # 翻牌后 MC 分析器（200 次），翻牌前跳过 MC
+        # 翻牌后 MC 分析器，翻牌前查多人胜率表
         self.analyzer = BattleAnalyzer(
             preflop_sims=0, postflop_sims=postflop_sims, seed=seed,
         )
-        # 下注参数
-        self.bet_k_value = bet_k_value
-        self.bet_k_bluff = bet_k_bluff
-        self.bet_cap_frac = bet_cap_frac
-        self.bet_strategy = bet_strategy  # "blended", "value_only", "separated"
-        # 对手建模参数（统计物理启发）
-        self.F_max = F_max              # 最大弃牌率
-        self.lambda_fold = lambda_fold  # fold equity 对下注尺度的敏感度
-        self.nu = nu                    # 对手跟注范围收紧速度
-        self.q_inf_ratio = q_inf_ratio  # q_inf = max(0.05, win_rate * q_inf_ratio)
+        # 对手模型（由 GameManager 注入共享实例；无数据时退回风格常数）
+        self._opponent_model = None
 
         self.hands_seen: int = 0
+
+    def set_opponent_model(self, model) -> None:
+        """注入共享 OpponentModel（逐对手 F_max/λ 估计）。"""
+        self._opponent_model = model
 
     @property
     def style(self) -> BotStyle:
@@ -165,29 +202,48 @@ class BoltzmannBot:
         bb = game_state.big_blind
         hole_cards = player.hole_cards
         community = game_state.community_cards
-        active_opponents = sum(
-            1 for p in game_state.players
-            if not p.is_folded and p.name != player.name and p.status.value < 3
-        )
+        # 仍在局中的对手；已全下者不可能弃牌(F_i=0)但仍争夺底池
+        opponents = [
+            p for p in game_state.players
+            if p.is_in_hand and p.name != player.name
+        ]
+        active_opponents = len(opponents)
         pot = game_state.pot.total / bb
         to_call = max(0, game_state.current_bet - player.current_bet) / bb
-        player_bet = player.current_bet / bb
-        max_bet = game_state.get_max_bet(player) / bb
 
-        # 胜率：翻牌前查表，翻牌后 MC
+        # 胜率：翻牌前查多人真实胜率表，翻牌后 MC equity share
         if game_state.phase == GamePhase.PRE_FLOP:
-            raw_equity = preflop_hand_strength(hole_cards) / 100.0
-            # 多人底池修正：指数衰减近似（查表值基于 vs 1 个对手）
-            if active_opponents > 1:
-                win_rate = raw_equity ** (1.0 + 0.3 * (active_opponents - 1))
-            else:
-                win_rate = raw_equity
+            win_rate = preflop_hand_strength(hole_cards, active_opponents) / 100.0
         else:
             analysis = self.analyzer.analyze(
                 hole_cards, community, active_opponents, game_state, player,
             )
             dist = analysis.get("ranking_distribution", [])
-            win_rate = dist[0]["prob"] / 100.0 if dist else 0.5
+            equity_entry = next(
+                (e for e in dist if e.get("rank") == -1), None,
+            )
+            win_rate = (
+                equity_entry["prob"] / 100.0 if equity_entry
+                else 0.5
+            )
+
+        # 逐对手响应参数（有观测数据时收缩混合，否则风格常数；全下者 F=0）
+        fold_maxes: List[float] = []
+        lams: List[float] = []
+        for opp in opponents:
+            if opp.is_all_in:
+                fold_maxes.append(0.0)
+                lams.append(self.profile.lambda_fold)
+            elif self._opponent_model is not None:
+                fold_maxes.append(
+                    self._opponent_model.fold_max(opp.name, self.profile.F_max)
+                )
+                lams.append(
+                    self._opponent_model.lam(opp.name, self.profile.lambda_fold)
+                )
+            else:
+                fold_maxes.append(self.profile.F_max)
+                lams.append(self.profile.lambda_fold)
 
         # 计算各动作 EV
         action_evs: Dict[ActionType, float] = {}
@@ -210,21 +266,20 @@ class BoltzmannBot:
             else ActionType.RAISE if ActionType.RAISE in legal
             else None
         )
-        if bet_action is not None and active_opponents >= 0:
+        if bet_action is not None:
             # 确定最小/最大合法下注增量（BB 单位）
             # _ev_bet 公式期望 x = 本轮新增投入（增量），非总下注额
             player_chips_bb = player.chips / bb
             if bet_action == ActionType.BET:
                 min_r = game_state.big_blind / bb  # 主动下注 = BB
-                max_bet_increment = player_chips_bb
             else:
                 # RAISE: 增量为 max(min_raise, last_raise)，不含 to_call
                 min_r = max(game_state.min_raise, game_state.last_raise) / bb
-                max_bet_increment = player_chips_bb
+            max_bet_increment = player_chips_bb
 
             if min_r <= max_bet_increment:
                 x_opt, ev_opt = self._find_optimal_bet(
-                    pot, win_rate, active_opponents, min_r, max_bet_increment,
+                    pot, win_rate, fold_maxes, lams, min_r, max_bet_increment,
                 )
                 action_evs[bet_action] = ev_opt
                 bet_sizes[bet_action] = x_opt
@@ -234,7 +289,7 @@ class BoltzmannBot:
             del action_evs[ActionType.FOLD]
 
         # 玻尔兹曼采样（T 以 pot 标度：概率比在不同 pot 下保持恒定）
-        T = self.temperature * pot  # pot-scale coefficient -> actual temperature in BB
+        T = self.temperature * max(pot, 1.0)  # 下限 1BB 防 pot=0 除零
         # 数值稳定：减去最大 EV
         max_ev = max(action_evs.values())
         weights = {a: math.exp((e - max_ev) / T) for a, e in action_evs.items()}
@@ -255,86 +310,96 @@ class BoltzmannBot:
     # ---- Bet EV 计算 ----
 
     def _q_inf(self, win_rate: float) -> float:
-        """根据胜率计算底线胜率 q_inf（被最强范围 call 后的胜率）。
+        """被最强跟注范围 call 后的底线胜率（报告偏移形式）。
 
-        强牌（w 高）被 call 后仍强 → q_inf 接近 w；
-        弱牌（w 低）被 call 后几乎必输 → q_inf 接近 0。
-        线性插值公式: q_inf = max(0.05, w * (1 - q_inf_ratio) + w^2 * q_inf_ratio)
+        q_inf = max(0.05, w - q_delta)。
         """
-        w = win_rate
-        # 用 q_inf_ratio 控制 w 的二次项权重：0=纯线性，1=纯平方
-        q_inf = w * (1.0 - self.q_inf_ratio) + w * w * self.q_inf_ratio
-        return max(0.05, min(w, q_inf))
+        return max(0.05, min(win_rate, win_rate - self.profile.q_delta))
 
-    def _ev_bet(self, x: float, pot: float, win_rate: float, n_opponents: int) -> float:
-        """计算下注 x BB 的期望收益（统计物理启发模型）。
+    def _ev_bet(
+        self,
+        x: float,
+        pot: float,
+        win_rate: float,
+        fold_maxes: Sequence[float],
+        lams: Sequence[float],
+    ) -> float:
+        """下注 x BB 的期望收益（逐对手响应模型）。
 
-        F(x) = F_max * (1 - exp(-lambda_fold * z))
-        q(x) = q_inf + (w - q_inf) * exp(-nu * z)
-        z = x / pot
+        F_i(x) = F_max_i · (1 − e^(−λ_i·z)),  z = x/pot
+        q(x)  = q_inf + (w − q_inf) · e^(−ν·z)
+        all_fold = Π F_i
+        E[k | k≥1] = Σ(1−F_i) / (1 − Π F_i)   (条件期望的精确式)
+        EV = all_fold·P + (1−all_fold)·[q·(P + (1+k)·x) − x]
 
-        多人底池：使用期望跟注人数 n_call = n * (1-F)，近似为
-        EV = Σ P(k callers) * [q * (P + (k+1)*x) - x]
-           ≈ F^n * P + (1-F^n) * [q * (P + (1+E[k|k≥1])*x) - x]
-        其中 E[k|k≥1] ≈ max(1, n*(1-F))（至少一人跟注时）
+        Args:
+            x: 本轮新增投入（BB）。
+            pot: 当前底池（BB）。
+            win_rate: 当前 equity share。
+            fold_maxes: 各对手的 F_max（全下者为 0）。
+            lams: 各对手的 λ。
+
+        Returns:
+            期望收益（BB）。
         """
-        if n_opponents <= 0:
-            return win_rate * (pot + 2 * x) - x
+        if not fold_maxes:
+            # 无对手：底池已属于自己
+            return pot
         if x <= 0 or pot <= 0:
             return win_rate * pot
 
         z = x / pot
-        F = self.F_max * (1.0 - math.exp(-self.lambda_fold * z))
-        fp = max(0.0, min(self.F_max, F))
-        all_fold = fp ** n_opponents if n_opponents > 0 else 0.0
+        fold_probs = [
+            max(0.0, min(fm, fm * (1.0 - math.exp(-lam * z))))
+            for fm, lam in zip(fold_maxes, lams)
+        ]
+        all_fold = math.prod(fold_probs)
 
-        # 条件胜率
-        if self.nu > 1e-6:
+        # 条件胜率（被跟注后对手范围收紧）
+        if self.profile.nu > 1e-6:
             q_inf = self._q_inf(win_rate)
-            q = q_inf + (win_rate - q_inf) * math.exp(-self.nu * z)
+            q = q_inf + (win_rate - q_inf) * math.exp(-self.profile.nu * z)
         else:
             q = win_rate
 
-        # 期望跟注人数（至少一人时）
-        exp_callers = max(1.0, n_opponents * (1.0 - fp))
-        ev_called = q * (pot + (1.0 + exp_callers) * x) - x
+        # 期望跟注人数（条件于至少一人跟注）
+        expected_callers = sum(1.0 - fp for fp in fold_probs)
+        if all_fold >= 1.0 - 1e-12:
+            return pot
+        exp_callers_given_call = expected_callers / (1.0 - all_fold)
+        ev_called = q * (pot + (1.0 + exp_callers_given_call) * x) - x
         return all_fold * pot + (1.0 - all_fold) * ev_called
 
     def _find_optimal_bet(
-        self, pot: float, win_rate: float, n_opponents: int,
-        min_bet: float, max_bet: float, n_candidates: int = 15,
-    ) -> tuple[float, float]:
-        """搜索最优下注额 x* = argmax EV_raise(x)。
+        self,
+        pot: float,
+        win_rate: float,
+        fold_maxes: Sequence[float],
+        lams: Sequence[float],
+        min_bet: float,
+        max_bet: float,
+    ) -> Tuple[float, float]:
+        """搜索最优下注额 x* = argmax EV_bet(x)。
 
-        在 [min_bet, max_bet] 内搜索最大化 EV 的下注额。
-        候选点包括标准尺度 (1/4P, 1/3P, 1/2P, 2/3P, 3/4P, P, 1.5P, 2P) + all-in。
+        候选为标准底池比例 (0.25P…2P) + 区间边界。
         """
         if min_bet >= max_bet:
-            x_best = max_bet
-            return x_best, self._ev_bet(x_best, pot, win_rate, n_opponents)
+            return max_bet, self._ev_bet(max_bet, pot, win_rate, fold_maxes, lams)
 
-        # 候选下注尺度
         fractions = [0.25, 0.33, 0.50, 0.67, 0.75, 1.0, 1.25, 1.5, 2.0]
-        candidates = []
-        for frac in fractions:
-            x = frac * pot
-            if min_bet <= x <= max_bet:
-                candidates.append(x)
-        # 始终加入边界
-        if min_bet not in candidates:
-            candidates.append(min_bet)
-        if max_bet not in candidates:
-            candidates.append(max_bet)
+        candidates = [
+            frac * pot for frac in fractions
+            if min_bet <= frac * pot <= max_bet
+        ]
+        candidates.extend([min_bet, max_bet])
 
-        # 评估所有候选
         best_x = min_bet
         best_ev = float("-inf")
-        for x in sorted(candidates):
-            ev = self._ev_bet(x, pot, win_rate, n_opponents)
+        for x in sorted(set(candidates)):
+            ev = self._ev_bet(x, pot, win_rate, fold_maxes, lams)
             if ev > best_ev:
                 best_ev = ev
                 best_x = x
-
         return best_x, best_ev
 
     # ---- Action 构造 ----
