@@ -435,9 +435,6 @@ class PromptBuilder:
                 result.append(f"下注 ${min_raise}–${max_bet}（BET）—— 主动下注")
             elif action == ActionType.RAISE:
                 result.append(f"加注 ${min_raise}–${max_bet}（RAISE）—— 在已有下注基础上加注")
-            elif action == ActionType.ALL_IN:
-                all_in_amount = player.chips + player.current_bet
-                result.append(f"全下 ${all_in_amount}（ALL-IN）—— 押上所有筹码")
         return result
 
     # ================================================================

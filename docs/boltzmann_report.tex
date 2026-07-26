@@ -488,4 +488,28 @@ $x^*(w) = \arg\max_x EV(x, w)$，展示最优下注额如何随胜率连续演�
 {\small 实验完成于 2026年7月7日。模型验证通过，已集成至项目源码。}
 \end{center}
 
+
+\subsection{实现对齐说明(2026-07)}
+
+本报告规定的模型已在生产代码中完整落地,对应关系如下:
+
+\begin{itemize}
+  \item \textbf{按风格参数表}: $\tau, F_{\max}, \lambda, \nu, q_\delta$
+        六风格取值见 \texttt{config/bot\_profiles.json}
+        (代码内置同值默认,JSON 可覆盖字段);
+        $q_\infty$ 采用本报告的偏移形式 $\max(0.05,\, w - q_\delta)$。
+  \item \textbf{逐对手响应}: $F_i(x)$ 按对手独立计算;已全下对手
+        $F_i = 0$;有观测数据时 $F_{\max}$ 由 $1-\mathrm{VPIP}$
+        与风格基准按手数收缩混合、$\lambda$ 按侵略因子缩放
+        (\texttt{src/ai/opponent\_model.py})。
+  \item \textbf{期望跟注人数}: 生产实现使用精确条件期望
+        $E[k \mid k \ge 1] = \sum_i (1-F_i) \,/\, (1 - \prod_i F_i)$,
+        修正了早期近似 $\max(1, n(1-F))$ 的系统性低估。
+  \item \textbf{胜率输入}: 翻前查 $169 \times 8$ 多人 equity share 表
+        (每格 $\ge 5\times10^4$ 次模拟,\texttt{scripts/build\_preflop\_table.py});
+        翻后为 tie 校正的蒙特卡洛 equity share。
+  \item \textbf{温度防护}: $T = \tau \cdot \max(P, 1\,\mathrm{BB})$,
+        避免 $P=0$ 时的除零。
+\end{itemize}
+
 \end{document}

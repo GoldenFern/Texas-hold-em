@@ -7,81 +7,76 @@ alwaysApply: true
 
 ## 项目概述
 
-全栈德州扑克 No-Limit 应用：完整游戏引擎 + 规则 AI Bot + **LLM 驱动 AI 对手**（Claude / GPT / Ollama）+ Flask-SocketIO 实时 Web 界面 + 蒙特卡洛分析工具。
+全栈德州扑克 No-Limit 应用:自研引擎 + Boltzmann-EV Bot + **LLM 驱动 AI 对手**(LangChain 多 Provider)+ Flask-SocketIO 服务 + Vue 3 + TS 前端 + 蒙特卡洛分析。
 
 ## 启动命令
 
 ```bash
-python main.py                    # Web 服务器（默认 http://localhost:5000）
-python main.py --cli --hands 25   # CLI 模式（6 个 AI Bot 自动对战）
-python main.py --test             # 运行全部测试
-pytest tests/ -v                  # 单测详细输出
+python main.py                    # Web 服务器(默认 http://127.0.0.1:5000)
+cd frontend && npm run dev        # 前端开发热更新(:5173 代理到 :5000)
+cd frontend && npm run build      # 前端构建到 static/dist(生产)
+python main.py --cli --hands 25   # CLI 模式(6 个 AI Bot 自动对战)
+python -m pytest tests/ -q --ignore=tests/test_llm_live.py   # 全部单测
+python scripts/sim_10000hands.py  # 万手守恒/零和门禁
+python scripts/build_preflop_table.py   # 重新生成翻前多人胜率表
 ```
 
 ## 架构分层
 
 | 层 | 目录 | 职责 |
 |---|---|---|
-| 游戏引擎 | `src/engine/` | Card / Deck / Hand evaluator / Player / Pot / GameState 状态机 |
-| AI 机器人 | `src/ai/` | 6 种 Bot 风格（TAG/LAG/NIT/CallingStation/Maniac/Shark）+ 策略计算 |
-| LLM 集成 | `src/llm/` | 多 Provider 客户端、Prompt 构建、响应解析、降级链、LLMBot |
-| 分析工具 | `src/analysis/` | 蒙特卡洛胜率、底池赔率/隐含赔率、EV 计算、牌局记录 |
-| Web 服务 | `src/server/` | Flask 工厂 + REST API + SocketIO 实时事件 + GameManager |
-| 前端 | `static/` `templates/` | 桌面风格扑克桌 UI（Canvas 椭圆布局）、操作面板、分析面板 |
+| 游戏引擎 | `src/engine/` | Card / Deck(可设种) / HandEvaluator(Treys) / Player / **Pot(边池唯一权威)** / GameState 状态机 |
+| AI 机器人 | `src/ai/` | BoltzmannBot(6 温度风格)+ OpponentModel(逐对手收缩估计)+ 169×8 多人翻前表 |
+| LLM 集成 | `src/llm/` | LangChain 客户端(类型化错误)、PromptBuilder、ResponseParser、ContextManager、LLMBot |
+| 分析工具 | `src/analysis/` | BattleAnalyzer(Treys 整数 MC + 状态缓存 + CI)、HandReporter(VPIP/PFR/AF) |
+| Web 服务 | `src/server/` | Flask 工厂 + REST + SocketIO GameManager + GameSessionRegistry |
+| 前端 | `frontend/` | Vue 3 + Vite + TS + Pinia;构建产物在 `static/dist` |
 
 ## 关键设计
 
-### GameState 事件机制
-`GameState` 使用事件回调（`on("hand_finished", ...)`）与上层解耦。Web 层通过回调推送 SocketIO 消息，而非引擎层主动调用 Web API。
+### 通信契约
+`docs/protocol.md` 是 Socket.IO/REST 的**唯一权威**;改契约先改它,前端类型在 `frontend/src/api/protocol.ts` 同步。
 
-### 牌型评估（Hand Evaluator）
-`HandEvaluator.evaluate(cards)` 接收 5-7 张牌，生成 C(7,5)=21 种组合，返回最优 `HandResult`。评分系统使用 `(牌型等级, 踢脚1, 踢脚2, ...)` 元组，可直接用 Python 元组比较。正确处理 A-2-3-4-5 轮子顺子。
+### 引擎不变量(改动引擎必看)
+- `players` 列表索引 == seat(构造时断言)
+- 边池仅由 `Pot.collect_bets()` 计算:先退未匹配溢出(死钱算匹配额),再按未弃牌档位分层;层不可无主(RuntimeError),分层总额必等于投入
+- 免费弃牌非法(to_call=0 时无 FOLD)——防无人认领死钱
+- OUT(零筹码未重购)玩家在所有流程判定中等价弃牌
+- min_raise 每街重置;FL 每街 1 bet + 3 raise 封顶
+- 回归安全网:`tests/test_chip_conservation.py`(固定种子逐手断言守恒)+ `scripts/sim_10000hands.py`
 
-### LLM Bot 决策链
-```
-GameState → PromptBuilder（注入手牌强度/赔率/胜率）→ LLM Client
-→ ResponseParser（提取 JSON、映射动作、裁剪数额）
-→ 失败时 FallbackChain：主 LLM → 备选 LLM → 规则引擎
-```
+### Bot 决策契约(RLCard 集成依赖,见 issues #8–12)
+所有 Bot 实现 `decide(game_state, player) -> Action`,**签名不可改**。附加依赖经构造器/setter 注入:
+- `bot.set_opponent_model(OpponentModel)` —— GameManager.create_game 注入共享实例(reporter 统计 → 逐对手 F_max/λ 收缩混合,无数据退回 `config/bot_profiles.json` 的风格常数)
+- 引擎动作面仅 FOLD/CHECK/CALL/BET/RAISE;全下 = BET/RAISE 到 max_bet
+- 新增 Bot 类型(如 RLCard):在 `BotFactory` 注册风格,`GameManager.create_game` 分支创建;非法动作会被 `game_error` 上报后降级,合法性以 `get_legal_actions` 为准
 
-`call_frequency` 控制 LLM 调用频率：`every`（每次）、`critical`（关键决策）、`mixed`（周期性 + 关键）。
+### GameManager 并发模型
+- eventlet green thread bot 循环;Event 等待用 `_wait_event`(socketio.sleep 0.1s 轮询,禁用阻塞式 wait)
+- LLM 决策在锁外执行,回锁后按 generation/hand_id/player 三重校验
+- `_broadcast_state` 锁内只做快照;MC 分析在后台任务用数值快照计算(`BattleAnalyzer.analyze_snapshot`)
+- 循环级异常 → `game_error` 事件 + 循环存活,严禁静默吞
 
-### Bot 决策验证
-所有 Bot 动作在 `game.apply_action()` 前必须通过 `game.get_legal_actions()` 校验。非法动作默认降级为 Check > Call > Fold。
-
-### 边池计算
-支持最多 9 名玩家不同 all-in 数额的边池分配，使用从低到高排序的 all-in 额进行多轮分配。
+### LLM 层
+- max_tokens 默认 4096(勿改回大值:超过 Provider 上限会导致全部调用 400 并静默降级)
+- API Key 只进 `.env`(`THP_LLM_API_KEY` 或按 Provider 环境变量),严禁写入 git 跟踪文件
+- 失败分类:auth / rate_limit / timeout / parse / network → `llm_status` 事件
 
 ## 编程约定
 
-- Python 3.13+，类型标注使用 `from __future__ import annotations`
-- 编码：所有文件读写显式 UTF-8
-- 配置：通过 `config/*.json` 管理，不硬编码
-- LLM API Key：通过环境变量或 `.env` 文件加载（`THP_LLM_*` 前缀优先）
-
-## LLM 依赖（可选）
-
-核心游戏无需 LLM。启用 LLM Bot 时按需安装：
-
-```bash
-pip install anthropic>=0.30.0    # Claude
-pip install openai>=1.0.0        # GPT
-pip install requests>=2.31.0     # Ollama 本地
-pip install python-dotenv        # .env 加载
-```
-
-环境变量：`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `THP_LLM_*`（项目专用前缀）。
+- Python 3.13+,类型标注 + `from __future__ import annotations`;Google 风格 Docstring;中文注释
+- 编码:所有文件读写显式 UTF-8
+- 配置进 `config/*.json`;魔法数字须有出处(报告/基准)
+- Conventional Commits(英文)
+- 前端:禁 `v-html`(XSS);文案集中 `frontend/src/i18n/zh.ts`
 
 ## Agent skills
 
 ### Issue tracker
-
-GitHub Issues（`gh` CLI）；外部 PR 不作为 triage 入口。详见 `docs/agents/issue-tracker.md`。
+GitHub Issues(`gh` CLI);外部 PR 不作为 triage 入口。详见 `docs/agents/issue-tracker.md`。
 
 ### Triage labels
-
-五个标准 triage 标签，名称与默认一致。详见 `docs/agents/triage-labels.md`。
+五个标准 triage 标签,名称与默认一致。详见 `docs/agents/triage-labels.md`。
 
 ### Domain docs
-
-单上下文布局：根目录 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。
+单上下文布局:根目录 `CONTEXT.md` + `docs/adr/`。详见 `docs/agents/domain.md`。

@@ -60,8 +60,7 @@
 }
 ```
 
-迁移期兼容:`analysis` 的五个子字段同时平铺在顶层(`hand_type_probs` 等),
-Vue 前端上线后删除平铺形式。
+注: `analysis` 仅以子对象形式提供（迁移期的顶层平铺已随 Vue 前端上线移除）。
 
 ## REST API
 
