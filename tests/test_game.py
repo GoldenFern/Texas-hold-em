@@ -349,7 +349,7 @@ class TestGameFlow:
             all_c = p.hole_cards + game.community_cards
             results[p.name] = HandEvaluator.evaluate(all_c)
 
-        game._calculate_side_pots()
+        game.pot.collect_bets(game.players)
         game._distribute_pots(active, results)
 
         # A 应有同花顺（皇家同花顺）

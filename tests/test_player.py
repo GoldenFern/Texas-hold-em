@@ -51,38 +51,6 @@ class TestPlayerBasics:
         assert p.can_act is False
 
 
-class TestBet:
-    """下注/加注测试。"""
-
-    def test_normal_bet(self) -> None:
-        p = Player(name="Hero", chips=1000, seat=0)
-        p.current_bet = 10  # 本轮已下 10
-        added = p.bet(30)  # 加到 30
-        assert added == 20
-        assert p.current_bet == 30
-        assert p.chips == 980
-        assert p.total_bet == 20
-        assert p.status == PlayerStatus.ACTIVE
-
-    def test_bet_all_in(self) -> None:
-        """下注超过筹码量应全下。"""
-        p = Player(name="Hero", chips=100, seat=0)
-        added = p.bet(200)
-        assert added == 100
-        assert p.chips == 0
-        assert p.current_bet == 100
-        assert p.total_bet == 100
-        assert p.is_all_in is True
-
-    def test_bet_zero(self) -> None:
-        p = Player(name="Hero", chips=1000, seat=0)
-        p.current_bet = 20
-        added = p.bet(20)
-        assert added == 0
-        assert p.chips == 1000
-        assert p.current_bet == 20
-
-
 class TestCall:
     """跟注测试。"""
 

@@ -79,30 +79,16 @@ class Player:
         return self.status == PlayerStatus.OUT
 
     @property
+    def is_in_hand(self) -> bool:
+        """是否仍在本手牌中（未弃牌且未出局，含全下）。"""
+        return self.status in (PlayerStatus.ACTIVE, PlayerStatus.ALL_IN)
+
+    @property
     def can_act(self) -> bool:
         """是否可以行动（未弃牌且未全下且有筹码）。"""
         return self.status == PlayerStatus.ACTIVE and self.chips > 0
 
     # ---- 动作 ----
-
-    def bet(self, amount: int) -> int:
-        """下注/加注。
-
-        Args:
-            amount: 本轮新增的下注总额（含之前的 current_bet）。
-
-        Returns:
-            实际新增投入的筹码量。
-        """
-        added = amount - self.current_bet
-        if added > self.chips:
-            added = self.chips
-            amount = self.current_bet + added
-            self.status = PlayerStatus.ALL_IN
-        self.chips -= added
-        self.current_bet = amount
-        self.total_bet += added
-        return added
 
     def call(self, amount: int) -> int:
         """跟注。
@@ -130,10 +116,6 @@ class Player:
     def fold(self) -> None:
         """弃牌。"""
         self.status = PlayerStatus.FOLDED
-
-    def check(self) -> None:
-        """过牌（仅在无需跟注时合法）。"""
-        pass  # 不改变任何状态
 
     def post_blind(self, amount: int) -> int:
         """支付盲注。

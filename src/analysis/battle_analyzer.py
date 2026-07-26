@@ -268,9 +268,9 @@ class BattleAnalyzer:
             player.chips,
         ))
 
-        # 底池按玩家可争夺的部分过滤（排除无法赢取的边池）
+        # 底池按玩家可争夺的部分过滤（摊牌分层后排除无法赢取的边池）
         pot_total = game.pot.total
-        if hasattr(game.pot, 'get_pot_for_player') and game.pot._side_pots:
+        if game.pot.side_pots:
             pot_total = game.pot.get_pot_for_player(player.name)
 
         # 底池赔率

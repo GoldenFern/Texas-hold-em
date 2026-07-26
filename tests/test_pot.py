@@ -1,19 +1,25 @@
-"""Pot / SidePot 底池管理测试。"""
+"""Pot 边池权威的单元测试 —— 分层、资格、死钱、退款。"""
+
+from __future__ import annotations
 
 import pytest
 
 from src.engine.player import Player
-from src.engine.pot import Pot, SidePot
+from src.engine.pot import Pot
+from src.utils.constants import PlayerStatus
 
 
-def make_player(name: str, chips: int, seat: int) -> Player:
-    return Player(name=name, chips=chips, seat=seat)
+def _player(name: str, total_bet: int, folded: bool = False, chips: int = 0) -> Player:
+    """构造一个带指定投入的测试玩家。"""
+    p = Player(name=name, chips=chips, seat=0)
+    p.total_bet = total_bet
+    if folded:
+        p.status = PlayerStatus.FOLDED
+    return p
 
 
 class TestPotBasic:
-    """底池基本操作。"""
-
-    def test_new_pot_is_empty(self) -> None:
+    def test_empty_pot(self) -> None:
         pot = Pot()
         assert pot.total == 0
         assert pot.main_pot == 0
@@ -21,206 +27,147 @@ class TestPotBasic:
 
     def test_add_bet_increases_total(self) -> None:
         pot = Pot()
-        p1 = make_player("Alice", 1000, 0)
-        pot.add_bet(p1, 50)
-        assert pot.total == 50
+        pot.add_bet(50)
+        pot.add_bet(30)
+        assert pot.total == 80
 
     def test_reset_clears_pot(self) -> None:
         pot = Pot()
-        p1 = make_player("Alice", 1000, 0)
-        pot.add_bet(p1, 100)
+        pot.add_bet(100)
         pot.reset()
         assert pot.total == 0
+        assert pot.pots == []
 
 
-class TestSidePotCalculation:
-    """边池计算测试。"""
-
-    def test_no_all_in_no_side_pots(self) -> None:
-        """无人全下，无边池。"""
+class TestCollectBets:
+    def test_no_all_in_single_main_pot(self) -> None:
+        """无全下：全部进入主池，所有未弃牌者有资格。"""
+        players = [_player("A", 100), _player("B", 100), _player("C", 100)]
         pot = Pot()
-        p1 = make_player("A", 1000, 0)
-        p2 = make_player("B", 1000, 1)
-        p3 = make_player("C", 1000, 2)
+        refund = pot.collect_bets(players)
 
-        p1.total_bet = 100
-        p2.total_bet = 100
-        p3.total_bet = 100
-
-        pot.collect_bets([p1, p2, p3])
-
-        # 仅主池
+        assert refund == 0
         assert pot.main_pot == 300
-        assert len(pot.side_pots) == 0
+        assert pot.side_pots == []
+        assert pot.pots[0].eligible_players == {"A", "B", "C"}
+        assert pot.total == 300
 
-    def test_one_all_in_creates_side_pot(self) -> None:
-        """一人全下，筹码不足匹配。"""
+    def test_two_levels_side_pot(self) -> None:
+        """B/C 下注 100，A 全下 50：主池 150（A/B/C），边池 100（B/C）。"""
+        players = [_player("A", 50), _player("B", 100), _player("C", 100)]
         pot = Pot()
-        p1 = make_player("A", 50, 0)
-        p2 = make_player("B", 1000, 1)
-        p3 = make_player("C", 1000, 2)
+        pot.collect_bets(players)
 
-        # A 全下 50, B 和 C 各下注 100
-        p1.total_bet = 50
-        p2.total_bet = 100
-        p3.total_bet = 100
-
-        pot.collect_bets([p1, p2, p3])
-
-        # 主池: 3×50 = 150 (A, B, C 均有资格)
-        # 边池: 2×50 = 100 (仅 B, C 有资格)
         assert pot.main_pot == 150
         assert len(pot.side_pots) == 1
         assert pot.side_pots[0].amount == 100
-        assert "A" not in pot.side_pots[0].eligible_players
-        assert "B" in pot.side_pots[0].eligible_players
-        assert "C" in pot.side_pots[0].eligible_players
+        assert pot.pots[0].eligible_players == {"A", "B", "C"}
+        assert pot.side_pots[0].eligible_players == {"B", "C"}
+        assert pot.total == 250
 
-    def test_two_all_in_different_levels(self) -> None:
-        """两人全下，不同层级。"""
+    def test_three_levels(self) -> None:
+        """30/60/100 三层全下。"""
+        players = [_player("A", 30), _player("B", 60), _player("C", 100),
+                   _player("D", 100)]
         pot = Pot()
-        p1 = make_player("A", 30, 0)
-        p2 = make_player("B", 60, 1)
-        p3 = make_player("C", 1000, 2)
+        pot.collect_bets(players)
 
-        p1.total_bet = 30
-        p2.total_bet = 60
-        p3.total_bet = 100
+        assert pot.main_pot == 120  # 30 × 4
+        assert pot.side_pots[0].amount == 90  # 30 × 3
+        assert pot.side_pots[0].eligible_players == {"B", "C", "D"}
+        assert pot.side_pots[1].amount == 80  # 40 × 2
+        assert pot.side_pots[1].eligible_players == {"C", "D"}
+        assert pot.total == 290  # 30+60+100+100
 
-        pot.collect_bets([p1, p2, p3])
-
-        # 第一层: 3×30 = 90 (所有人)
-        assert pot.main_pot == 90
-        # 第二层: (60-30)×2 = 60 (B, C)
-        assert len(pot.side_pots) >= 1
-        side_60 = pot.side_pots[0]
-        assert side_60.amount == 60
-        assert "A" not in side_60.eligible_players
-        # 第三层: (100-60)×1 = 40 (仅 C)
-        assert len(pot.side_pots) == 2
-        side_100 = pot.side_pots[1]
-        assert side_100.amount == 40
-        assert "A" not in side_100.eligible_players
-        assert "B" not in side_100.eligible_players
-        assert "C" in side_100.eligible_players
-
-    def test_folded_player_excluded(self) -> None:
-        """弃牌玩家不计入边池资格。"""
+    def test_folded_dead_money_stays(self) -> None:
+        """弃牌者的死钱留在对应层内，但无资格。"""
+        players = [
+            _player("A", 100, folded=True),
+            _player("B", 100),
+            _player("C", 100),
+        ]
         pot = Pot()
-        p1 = make_player("A", 100, 0)
-        p2 = make_player("B", 1000, 1)
-        p3 = make_player("C", 1000, 2)
+        refund = pot.collect_bets(players)
 
-        p1.total_bet = 100
-        p2.total_bet = 200
-        p3.total_bet = 200
-        p1.fold()  # A 弃牌
-
-        pot.collect_bets([p1, p2, p3])
-
-        # 主池: 3×100 = 300 (但 A 弃牌，无资格)
+        assert refund == 0
         assert pot.main_pot == 300
-        # 边池: 2×100 = 200 (仅 B, C)
-        assert len(pot.side_pots) == 1
-        assert pot.side_pots[0].amount == 200
+        assert pot.pots[0].eligible_players == {"B", "C"}
 
-    def test_all_players_all_in(self) -> None:
-        """所有人全下且下注额不同的极端情况。"""
+    def test_uncalled_excess_refunded(self) -> None:
+        """最高下注未被匹配的部分退还，不计入底池。"""
+        players = [_player("A", 50), _player("B", 200, chips=10)]
         pot = Pot()
-        p1 = make_player("A", 10, 0)
-        p2 = make_player("B", 25, 1)
-        p3 = make_player("C", 50, 2)
+        refund = pot.collect_bets(players)
 
-        p1.total_bet = 10
-        p2.total_bet = 25
-        p3.total_bet = 50
+        assert refund == 150
+        assert players[1].chips == 160  # 10 + 150
+        assert players[1].total_bet == 50
+        assert pot.main_pot == 100
+        assert pot.side_pots == []
+        assert pot.total == 100
 
-        pot.collect_bets([p1, p2, p3])
+    def test_refund_matched_by_folded_dead_money(self) -> None:
+        """弃牌者的投入也算匹配额：退款只退超出全场第二高投入的部分。
 
-        total_pot = pot.main_pot + sum(sp.amount for sp in pot.side_pots)
-        assert total_pot == 85  # 10+25+50
-
-
-# ============================================================
-# 边界场景：非等额多路 All-In
-# ============================================================
-
-class TestMultiLevelAllIn:
-    """四人多层级全下，主池+边池划分。"""
-
-    def test_four_player_multi_level(self) -> None:
-        """A 100, B 200, C 500, D 500：主池 400 + 边池1 300 + 边池2 600 = 1300。"""
+        C 弃牌前投入 400，B 全下 688：B 只退 688-400=288，
+        400-level 层含 C 的死钱、仅 B 有资格（由 B 在摊牌时赢走）。
+        """
+        players = [
+            _player("A", 28),
+            _player("B", 688, chips=0),
+            _player("C", 400, folded=True),
+        ]
         pot = Pot()
-        p_a = make_player("A", 100, 0)
-        p_b = make_player("B", 200, 1)
-        p_c = make_player("C", 500, 2)
-        p_d = make_player("D", 500, 3)
+        refund = pot.collect_bets(players)
 
-        p_a.total_bet = 100
-        p_b.total_bet = 200
-        p_c.total_bet = 500
-        p_d.total_bet = 500
+        assert refund == 288
+        assert players[1].total_bet == 400
+        # 层1: 28×3=84 (A,B)；层2: (400-28)×2=744 (仅 B)
+        assert pot.main_pot == 84
+        assert pot.pots[0].eligible_players == {"A", "B"}
+        assert pot.side_pots[0].amount == 744
+        assert pot.side_pots[0].eligible_players == {"B"}
+        # 守恒: 84 + 744 + 288(退款) == 28 + 688 + 400
+        assert pot.total + refund == 28 + 688 + 400
 
-        pot.collect_bets([p_a, p_b, p_c, p_d])
-
-        # 主池: 4 × 100 = 400
-        assert pot.main_pot == 400
-        # 应有 2 个边池
-        assert len(pot.side_pots) == 2
-        # 边池1: 3 × (200-100) = 300
-        assert pot.side_pots[0].amount == 300
-        # 边池2: 2 × (500-200) = 600
-        assert pot.side_pots[1].amount == 600
-        # 总额
-        total = pot.main_pot + sum(sp.amount for sp in pot.side_pots)
-        assert total == 1300
-
-    def test_four_player_eligibility(self) -> None:
-        """验证各玩家在各池的资格。"""
+    def test_out_player_ignored(self) -> None:
+        """OUT 玩家（total_bet=0）不产生层也无资格。"""
+        out = _player("Z", 0)
+        out.status = PlayerStatus.OUT
+        players = [out, _player("A", 100), _player("B", 100)]
         pot = Pot()
-        p_a = make_player("A", 100, 0)
-        p_b = make_player("B", 200, 1)
-        p_c = make_player("C", 500, 2)
-        p_d = make_player("D", 500, 3)
+        pot.collect_bets(players)
 
-        p_a.total_bet = 100
-        p_b.total_bet = 200
-        p_c.total_bet = 500
-        p_d.total_bet = 500
+        assert pot.main_pot == 200
+        assert pot.pots[0].eligible_players == {"A", "B"}
 
-        pot.collect_bets([p_a, p_b, p_c, p_d])
-
-        # 边池1: B、C、D 有资格，A 无资格
-        assert "A" not in pot.side_pots[0].eligible_players
-        assert "B" in pot.side_pots[0].eligible_players
-        assert "C" in pot.side_pots[0].eligible_players
-        assert "D" in pot.side_pots[0].eligible_players
-
-        # 边池2: 仅 C、D 有资格
-        assert "A" not in pot.side_pots[1].eligible_players
-        assert "B" not in pot.side_pots[1].eligible_players
-        assert "C" in pot.side_pots[1].eligible_players
-        assert "D" in pot.side_pots[1].eligible_players
-
-    def test_four_player_with_folded(self) -> None:
-        """D 弃牌后，边池2 D 不再有资格。"""
+    def test_conservation_invariant_violation_raises(self) -> None:
+        """无人认领的死钱层必须触发 RuntimeError（防静默丢钱）。"""
+        # 人为构造：弃牌者投入高于所有未弃牌者（引擎已禁止免费弃牌，
+        # 此处直接构造损坏状态验证防御断言）
+        players = [
+            _player("A", 50),
+            _player("B", 500, folded=True),
+            _player("C", 500, folded=True),
+        ]
         pot = Pot()
-        p_a = make_player("A", 100, 0)
-        p_b = make_player("B", 200, 1)
-        p_c = make_player("C", 500, 2)
-        p_d = make_player("D", 500, 3)
+        with pytest.raises(RuntimeError):
+            pot.collect_bets(players)
 
-        p_a.total_bet = 100
-        p_b.total_bet = 200
-        p_c.total_bet = 500
-        p_d.total_bet = 500
-        p_d.fold()
+    def test_get_pot_for_player(self) -> None:
+        players = [_player("A", 50), _player("B", 100), _player("C", 100)]
+        pot = Pot()
+        pot.collect_bets(players)
 
-        pot.collect_bets([p_a, p_b, p_c, p_d])
+        assert pot.get_pot_for_player("A") == 150
+        assert pot.get_pot_for_player("B") == 250
+        assert pot.get_pot_for_player("Z") == 0
 
-        # D 已弃牌，边池2 只剩 C
-        assert "D" not in pot.side_pots[1].eligible_players
-        # 主池和边池1 的金额不变
-        assert pot.main_pot == 400
-        assert pot.side_pots[0].amount == 300
-        assert pot.side_pots[1].amount == 600
+    def test_refund_uncalled_updates_total(self) -> None:
+        pot = Pot()
+        pot.add_bet(300)
+        p = _player("A", 200, chips=0)
+        pot.refund_uncalled(p, 80)
+        assert p.chips == 80
+        assert p.total_bet == 120
+        assert pot.total == 220

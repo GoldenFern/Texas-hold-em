@@ -219,7 +219,7 @@ class TestBattleAnalyzerOddsEv:
         players[0].hole_cards = hole
         players[1].total_bet = 20
         game = make_game(players)
-        game.pot.add_bet(players[1], 20)
+        game.pot.add_bet(20)
         game.current_bet = 20
 
         result = analyzer.analyze(
@@ -260,8 +260,8 @@ class TestBattleAnalyzerOddsEv:
         players[0].current_bet = 10
         players[1].total_bet = 50
         game = make_game(players)
-        game.pot.add_bet(players[1], 50)
-        game.pot.add_bet(players[0], 10)
+        game.pot.add_bet(50)
+        game.pot.add_bet(10)
         game.current_bet = 50
 
         result = analyzer.analyze(
@@ -287,8 +287,8 @@ class TestBattleAnalyzerPotFinancials:
         players[0].total_bet = 10  # 同步 total_bet
         players[1].total_bet = 30
         game = make_game(players)
-        game.pot.add_bet(players[0], 10)
-        game.pot.add_bet(players[1], 30)
+        game.pot.add_bet(10)
+        game.pot.add_bet(30)
         game.current_bet = 30
 
         result = analyzer.analyze(
@@ -310,7 +310,7 @@ class TestBattleAnalyzerPotFinancials:
         players[2].fold()
         players[2].total_bet = 15
         game = make_game(players)
-        game.pot.add_bet(players[2], 15)
+        game.pot.add_bet(15)
 
         result = analyzer.analyze(
             hole_cards=hole, community_cards=[],
@@ -443,7 +443,7 @@ class TestBattleAnalyzerSimCount:
         game = make_game(players)
         # 模拟有人加注后轮到 Hero，跟注状态
         players[1].total_bet = 20
-        game.pot.add_bet(players[1], 20)
+        game.pot.add_bet(20)
         game.current_bet = 20
 
         r1 = analyzer.analyze(

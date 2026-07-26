@@ -13,10 +13,14 @@ class Deck:
     """标准 52 张扑克牌堆。
 
     支持洗牌、发牌、重置操作。可作为迭代器使用。
+
+    Args:
+        seed: 随机种子。提供时洗牌序列可复现；为 None 时使用系统熵。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, seed: int | None = None) -> None:
         self._cards: List[Card] = []
+        self._rng = random.Random(seed)
         self.reset()
 
     # ---- 基本操作 ----
@@ -31,7 +35,7 @@ class Deck:
 
     def shuffle(self) -> None:
         """Fisher–Yates 洗牌。"""
-        random.shuffle(self._cards)
+        self._rng.shuffle(self._cards)
 
     def deal(self, n: int = 1) -> List[Card]:
         """从牌堆顶部发 n 张牌。
