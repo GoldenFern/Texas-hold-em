@@ -41,6 +41,7 @@ const UI = {
         let showTimer = null;
 
         document.addEventListener('mouseenter', (e) => {
+            if (!e.target || !e.target.closest) return;
             const icon = e.target.closest('.info-icon');
             if (!icon) return;
             const html = icon.getAttribute('data-tip') || '';
@@ -52,6 +53,7 @@ const UI = {
         }, true);
 
         document.addEventListener('mouseleave', (e) => {
+            if (!e.target || !e.target.closest) return;
             const icon = e.target.closest('.info-icon');
             if (!icon) return;
             clearTimeout(showTimer);

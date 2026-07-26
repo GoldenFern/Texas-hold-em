@@ -4,8 +4,9 @@ python-socketio>=5.11.0
 eventlet>=0.35.0
 pytest>=8.0.0
 treys>=0.1.0              # 德州扑克牌力评估（TwoPlusTwo 查表算法）
-# LLM 集成（可选依赖，按需安装）
-# anthropic>=0.30.0      # Claude API
-openai>=1.0.0          # GPT API
-# requests>=2.31.0       # Ollama 本地客户端
+# LLM 集成（通过 LangChain 统一接口）
+langchain-core>=1.0.0
+langchain-openai>=1.0.0      # OpenAI / DeepSeek / Qwen / GLM / Kimi / MiniMax 等
+langchain-anthropic>=1.0.0   # Anthropic Claude
+langchain-ollama>=1.0.0      # 本地 Ollama
 # python-dotenv>=1.0.0   # 环境变量加载

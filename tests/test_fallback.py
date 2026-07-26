@@ -3,7 +3,7 @@
 import pytest
 
 from src.llm.fallback import FallbackChain, build_default_fallback_chain
-from src.llm.client import MockClient
+from src.llm.langchain_client import MockClient
 from src.llm.config import ProviderConfig
 from src.llm.prompt_builder import PromptBuilder
 from src.llm.response_parser import ResponseParser
@@ -101,8 +101,8 @@ class TestFallbackChainWithMock:
         # 添加一个会用坏响应的 Mock
         chain.add_llm_fallback(ProviderConfig(provider="mock", model="mock"))
 
-        # 覆盖第一个客户端返回非法 JSON
-        chain._fallback_clients[0] = MockClient(responses=["not json at all"])
+        # 覆盖第一个客户端返回非法 JSON（_fallback_clients 的索引与 configs 对应）
+        chain._fallback_clients.append(MockClient(responses=["not json at all"]))
 
         # 设置终极降级
         chain.set_ultimate_fallback(lambda g, p: Action(p.name, ActionType.CHECK))
@@ -135,4 +135,4 @@ class TestBuildDefaultFallbackChain:
     def test_default_chain_has_mock(self) -> None:
         chain = build_default_fallback_chain()
         assert chain.has_fallbacks is True
-        assert len(chain._fallback_clients) >= 1
+        assert len(chain.fallback_configs) >= 1

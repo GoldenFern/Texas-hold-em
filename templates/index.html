@@ -74,6 +74,7 @@
                 <button class="tab-btn active" data-tab="analysis">战局分析</button>
                 <button class="tab-btn" data-tab="history">牌局历史</button>
                 <button class="tab-btn" data-tab="stats">统计数据</button>
+                <button class="tab-btn" data-tab="context">LLM Context</button>
             </div>
 
             <!-- 战局分析面板 -->
@@ -155,6 +156,13 @@
                     </table>
                 </div>
             </div>
+
+            <!-- LLM Context 调试面板 -->
+            <div id="panel-context" class="tab-content">
+                <div id="context-content">
+                    <div class="context-empty">等待 LLM 调用...</div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -196,7 +204,7 @@
                 </div>
                 <div class="form-row">
                     <label>API Key</label>
-                    <input type="password" id="llm-primary-api-key" placeholder="留空则使用环境变量">
+                    <input type="password" id="llm-primary-api-key" placeholder="留空自动读取环境变量（如 DEEPSEEK_API_KEY）">
                 </div>
                 <div class="form-row">
                     <label>Base URL <small>(可选)</small></label>
@@ -204,57 +212,21 @@
                 </div>
                 <div class="form-row form-row-3">
                     <div>
-                        <label>Temperature: <span id="llm-temp-val">0.10</span></label>
-                        <input type="range" id="llm-primary-temperature" min="0" max="1" step="0.05" value="0.1">
+                        <label>Temperature: <span id="llm-temp-val">0.50</span></label>
+                        <input type="range" id="llm-primary-temperature" min="0" max="1" step="0.05" value="0.5">
                     </div>
                     <div>
-                        <label>Max Tokens</label>
-                        <input type="number" id="llm-primary-max-tokens" value="200" min="50" max="4000">
-                    </div>
-                    <div>
-                        <label>超时 (秒)</label>
-                        <input type="number" id="llm-primary-timeout" value="15" min="5" max="120" step="5">
-                    </div>
-                </div>
-            </fieldset>
-
-            <!-- 降级链 -->
-            <fieldset class="settings-section">
-                <legend>🔗 降级链 <button type="button" id="btn-add-fallback" class="btn btn-sm" style="margin-left:10px;">+ 添加</button></legend>
-                <p class="form-hint">主力模型失败时，按顺序尝试降级链中的模型。</p>
-                <div id="fallback-list"></div>
-            </fieldset>
-
-            <!-- 决策策略 -->
-            <fieldset class="settings-section">
-                <legend>🎲 决策策略</legend>
-                <div class="form-row form-row-3">
-                    <div>
-                        <label>调用频率</label>
-                        <select id="llm-call-frequency">
-                            <option value="every">每次决策 (every)</option>
-                            <option value="critical">仅关键决策 (critical)</option>
-                            <option value="mixed">混合模式 (mixed)</option>
+                        <label>思维链强度</label>
+                        <select id="llm-reasoning-effort">
+                            <option value="disabled">关闭</option>
+                            <option value="high">High</option>
+                            <option value="max">Max</option>
                         </select>
                     </div>
                     <div>
-                        <label>每手最少 LLM 调用</label>
-                        <input type="number" id="llm-min-decisions" value="1" min="0" max="10">
+                        <label>超时 (秒)</label>
+                        <input type="number" id="llm-primary-timeout" value="60" min="5" max="300" step="5">
                     </div>
-                    <div>
-                        <label>上下文窗口 (手)</label>
-                        <input type="number" id="llm-context-window" value="5" min="1" max="20">
-                    </div>
-                </div>
-            </fieldset>
-
-            <!-- 高级功能 -->
-            <fieldset class="settings-section">
-                <legend>✨ 高级功能</legend>
-                <div class="checkbox-group">
-                    <label><input type="checkbox" id="llm-prompt-caching" checked> Prompt Caching（节省 Token）</label>
-                    <label><input type="checkbox" id="llm-commentary"> AI 解说（每步行为点评）</label>
-                    <label><input type="checkbox" id="llm-advisor"> AI 顾问（决策建议提示）</label>
                 </div>
             </fieldset>
 
@@ -335,5 +307,6 @@
     <script src="/static/js/controls.js"></script>
     <script src="/static/js/settings.js"></script>
     <script src="/static/js/ui.js"></script>
+    <script src="/static/js/context_debug.js"></script>
 </body>
 </html>

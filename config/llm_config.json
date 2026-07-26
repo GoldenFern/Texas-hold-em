@@ -1,37 +1,13 @@
 {
   "provider": "deepseek",
   "model": "deepseek-v4-pro",
-  "timeout_seconds": 15.0,
-  "temperature": 0.1,
-  "max_tokens": 200,
-  "fallbacks": [
-    {
-      "provider": "deepseek",
-      "model": "deepseek-v4-flash",
-      "timeout_seconds": 10.0,
-      "base_url": "https://api.deepseek.com"
-    },
-    {
-      "provider": "qwen",
-      "model": "qwen-3.7-plus",
-      "timeout_seconds": 10.0,
-      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    }
-  ],
-  "strategy": {
-    "call_frequency": "critical",
-    "min_llm_decisions_per_hand": 1,
-    "context_window_hands": 5
-  },
-  "caching": {
-    "enabled": true,
-    "prompt_caching": true
-  },
+  "timeout_seconds": 60.0,
+  "temperature": 0.5,
+  "base_url": "https://api.deepseek.com",
   "commentary": {
     "enabled": true
   },
   "advisor": {
     "enabled": true
-  },
-  "base_url": "https://api.deepseek.com"
+  }
 }

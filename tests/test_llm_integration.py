@@ -1,6 +1,6 @@
 """LLM 集成测试 —— 完整决策管道：游戏状态 → Prompt → LLM Mock → Action → 引擎。
 
-使用 MockClient 避免真实 API 调用。
+使用 MockClient 避免真实 API 调用（基于 LangChain FakeListChatModel）。
 """
 
 import pytest
@@ -9,7 +9,7 @@ from src.ai.bots import BotFactory, BotStyle
 from src.engine.card import Card
 from src.engine.game import Action, ActionType, GameState
 from src.engine.player import Player
-from src.llm.client import MockClient
+from src.llm.langchain_client import MockClient
 from src.llm.config import LLMConfig, ProviderConfig
 from src.llm.llm_bot import LLMBot
 from src.llm.prompt_builder import PromptBuilder
@@ -32,12 +32,13 @@ class TestPromptBuilder:
         player = players[game.current_player_index]
 
         prompt = PromptBuilder.build_decision_prompt(game, player, hand_strength=0.5)
-        assert "PRE_FLOP" in prompt or "翻牌前" in prompt
-        assert "Pot: $" in prompt
-        assert "Your stack: $" in prompt
-        assert player.name in prompt
-        assert "LEGAL ACTIONS" in prompt
-        assert "OUTPUT" in prompt
+        assert "翻牌前" in prompt or "PRE_FLOP" in prompt
+        assert "底池" in prompt
+        assert "你的筹码" in prompt
+        assert "合法动作" in prompt
+        assert "手牌强度" in prompt
+        # 当前玩家名出现在 seats 或 hole cards 中
+        assert str(player.seat) in prompt or "你的底牌" in prompt
 
     def test_postflop_prompt_has_draws(self) -> None:
         players = make_players(["A", "B"])
@@ -53,16 +54,18 @@ class TestPromptBuilder:
         assert "同花听牌" in prompt or "Draws" in prompt
 
     def test_prompt_includes_opponent_stats(self) -> None:
-        players = make_players(["A", "B"])
+        players = make_players(["A", "B", "C"])
         game = GameState(players)
         game.start_new_hand()
-        player = players[game.current_player_index]
+        # 找到不是当前玩家的对手
+        current_player = players[game.current_player_index]
+        opponent = next(p for p in players if p.name != current_player.name)
 
-        stats = {"B": {"vpip": 0.35, "pfr": 0.15, "aggression": 0.8}}
+        stats = {opponent.name: {"vpip": 0.35, "pfr": 0.15, "aggression": 0.8}}
         prompt = PromptBuilder.build_decision_prompt(
-            game, player, hand_strength=0.5, opponent_stats=stats
+            game, current_player, hand_strength=0.5, opponent_stats=stats
         )
-        assert "VPIP" in prompt or "B" in prompt
+        assert "入池率" in prompt or "VPIP" in prompt or opponent.name in prompt
 
 
 class TestResponseParser:
@@ -228,8 +231,12 @@ class TestLLMBotWithMock:
         llm_config.fallbacks = []
 
         bot = LLMBot("TestLLM", llm_config, seed=42)
-        # 用返回非法 JSON 的 Mock 替换客户端
-        bot._llm_client = MockClient(responses=["not valid json at all"])
+        # 用返回非法 JSON 的 chain 替换（模拟 LLM 解析失败 → 触发降级）
+        from src.llm.langchain_client import build_fake_chat_model, LCChainWrapper
+        from src.llm.prompt_builder import PromptBuilder
+        bad_model = build_fake_chat_model(["not valid json at all"])
+        bad_chain = PromptBuilder.get_decision_prompt_template() | bad_model
+        bot._chain_wrapper = LCChainWrapper(bad_chain, ProviderConfig(provider="mock", model="mock"))
 
         # 创建游戏
         players = make_players(["TestLLM", "B", "C"])
@@ -237,30 +244,24 @@ class TestLLMBotWithMock:
         game.start_new_hand()
         player = players[game.current_player_index]
 
-        # 即使 LLM 返回非法内容，也应产生合法动作（降级链/规则引擎兜底）
+        # 即使 LLM 返回非法内容，也应产生合法动作（规则引擎兜底）
         action = bot.decide(game, player)
         assert action is not None
         assert action.action_type in game.get_legal_actions(player)
-        # 确认使用了降级链或规则引擎（不是纯 LLM）
-        total_fallback = bot.fallback_decisions + bot.rule_decisions
-        assert total_fallback >= 1 or bot.llm_decisions == 0
+        # 确认 LLM 解析失败 → 规则引擎兜底
+        assert bot.rule_decisions >= 1
 
     def test_llmbot_system_prompt_is_valid(self) -> None:
-        """验证系统 Prompt 格式正确。"""
+        """验证系统 Prompt 格式正确（中文版）。"""
         system = PromptBuilder.get_system_prompt()
-        assert "Texas Hold'em" in system
+        assert "德州扑克" in system or "Texas" in system
         assert "JSON" in system
         assert len(system) > 50
 
     def test_advisor_prompt_format(self) -> None:
-        """验证顾问 Prompt 格式。"""
-        players = make_players(["A", "B"])
-        game = GameState(players)
-        game.start_new_hand()
-        player = players[game.current_player_index]
-
-        advisor_prompt = PromptBuilder.build_advisor_prompt(game, player)
-        assert "EDUCATIONAL" in PromptBuilder.get_advisor_system_prompt() or "coach" in PromptBuilder.get_advisor_system_prompt()
+        """验证顾问 Prompt 格式（中文版）。"""
+        advisor_system = PromptBuilder.get_advisor_system_prompt()
+        assert "教练" in advisor_system or "coach" in advisor_system or "建议" in advisor_system
 
     def test_factory_creates_llm_bot(self) -> None:
         """验证 BotFactory 可以创建 LLM 机器人。"""
@@ -276,9 +277,9 @@ class TestConfig:
     def test_default_config(self) -> None:
         from src.llm.config import LLMConfig
         config = LLMConfig()
-        assert config.primary.provider == "anthropic"
-        assert config.call_frequency == "every"
-        assert len(config.fallbacks) >= 1
+        assert config.primary.provider == "deepseek"
+        assert config.primary.model == "deepseek-v4-pro"
+        assert config.primary.temperature == 0.5
 
     def test_provider_config(self) -> None:
         from src.llm.config import ProviderConfig

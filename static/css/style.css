@@ -995,6 +995,100 @@ body {
     box-shadow: 0 0 8px rgba(212,168,67,0.3);
 }
 
+/* ---- LLM Context 调试面板 ---- */
+#panel-context {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+#panel-context.active { display: block; }
+
+.context-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+    font-size: 11px;
+}
+.context-provider {
+    color: var(--gold-light);
+    font-weight: bold;
+}
+.context-call {
+    color: var(--text-secondary);
+}
+
+.context-stats {
+    display: flex;
+    gap: 8px;
+    font-size: 10px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.context-section {
+    margin-bottom: 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.context-section summary {
+    padding: 4px 8px;
+    background: #1a1a2e;
+    color: var(--gold-light);
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.context-section summary:hover {
+    background: #222;
+}
+
+.context-text {
+    margin: 0;
+    padding: 6px 8px;
+    background: #0d0d1a;
+    color: #ccc;
+    font-family: 'Consolas', 'Menlo', 'Courier New', monospace;
+    font-size: 10px;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.context-empty {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 20px 0;
+    font-size: 12px;
+}
+
+.context-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+}
+.btn-context-copy {
+    flex: 1;
+    padding: 4px 8px;
+    background: #222;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 10px;
+    cursor: pointer;
+}
+.btn-context-copy:hover {
+    background: #333;
+    border-color: var(--gold);
+    color: var(--gold-light);
+}
+
 /* ---- 响应式 ---- */
 @media (max-width: 900px) {
     #main-container { flex-direction: column; }

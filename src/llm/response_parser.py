@@ -1,8 +1,11 @@
 """LLM 响应解析器 —— 将 LLM 文本输出转换为合法的 Action 对象。
 
+支持中英双语字段名（如 "action"/"动作"、"amount"/"金额" 等），
+与 LangChain 的 PydanticOutputParser 配合使用，也支持纯文本 JSON。
+
 安全设计：
     1. 去除 markdown 代码围栏 (```json ... ```)
-    2. JSON 解析 + 容错（允许小写、多余字段）
+    2. JSON 解析 + 容错（允许小写、多余字段、中英文字段）
     3. 动作合法性验证
     4. 金额裁剪到 [min_raise, max_bet]
     5. 任何失败返回 None，触发降级
@@ -22,18 +25,27 @@ logger = logging.getLogger(__name__)
 
 
 class ResponseParser:
-    """LLM 响应 → Action 对象解析器。"""
+    """LLM 响应 → Action 对象解析器（中英双语支持）。"""
 
-    # 动作名称映射（支持多种写法）
+    # 动作名称映射（英文 + 中文）
     _ACTION_MAP = {
+        # 英文
         "fold": ActionType.FOLD,
         "check": ActionType.CHECK,
         "call": ActionType.CALL,
         "bet": ActionType.BET,
         "raise": ActionType.RAISE,
-        "all_in": ActionType.RAISE,  # ALL_IN 映射为加注（金额=总筹码）
+        "all_in": ActionType.RAISE,
         "allin": ActionType.RAISE,
         "all-in": ActionType.RAISE,
+        # 中文
+        "弃牌": ActionType.FOLD,
+        "过牌": ActionType.CHECK,
+        "跟注": ActionType.CALL,
+        "下注": ActionType.BET,
+        "加注": ActionType.RAISE,
+        "全下": ActionType.RAISE,
+        "全押": ActionType.RAISE,
     }
 
     @classmethod
@@ -44,6 +56,12 @@ class ResponseParser:
         game: GameState,
     ) -> Optional[Action]:
         """将 LLM 原始响应解析为 Action 对象。
+
+        支持中英双语字段名：
+            - action / 动作
+            - amount / 金额
+            - reasoning / 理由
+            - analysis / 分析
 
         Args:
             raw_response: LLM 返回的原始文本。
@@ -70,25 +88,30 @@ class ResponseParser:
             logger.warning("JSON 顶层不是对象: %s", type(data))
             return None
 
-        # 3. 提取动作类型
-        action_str = str(data.get("action", "")).strip().lower().replace(" ", "_")
+        # 3. 提取动作类型（支持中英文字段名）
+        action_str = cls._get_field(data, "action", "动作")
+        if not action_str:
+            logger.warning("JSON 中缺少 action/动作 字段")
+            return None
+        action_str = action_str.strip().lower().replace(" ", "_")
+
         if action_str not in cls._ACTION_MAP:
             logger.warning("未知的动作类型: %s", action_str)
             return None
         action_type = cls._ACTION_MAP[action_str]
 
-        # 4. 提取金额
+        # 4. 提取金额（支持中英文字段名）
         amount = 0
         if action_type in (ActionType.BET, ActionType.RAISE):
-            raw_amount = data.get("amount", 0)
+            raw_amount = cls._get_field(data, "amount", "金额")
             try:
-                amount = int(raw_amount)
+                amount = int(raw_amount) if raw_amount is not None else 0
             except (ValueError, TypeError):
                 logger.warning("无效的金额: %s", raw_amount)
                 return None
 
-        # 5. 处理 ALL_IN 语义
-        if action_str in ("all_in", "allin", "all-in"):
+        # 5. 处理 ALL_IN 语义（中文 "全下"/"全押" 也可识别）
+        if action_str in ("all_in", "allin", "all-in", "全下", "全押"):
             amount = player.chips + player.current_bet
 
         # 6. 合法性验证
@@ -110,11 +133,9 @@ class ResponseParser:
             min_raise = game.get_min_raise_amount(player)
             max_bet = game.get_max_bet(player)
 
-            # 裁剪到合法范围
             amount = max(min_raise, min(amount, max_bet))
             amount = min(amount, player.chips + player.current_bet)
 
-            # 检测全下
             is_all_in = amount >= player.chips + player.current_bet
             if amount <= 0:
                 logger.warning("金额无效: %d", amount)
@@ -130,6 +151,25 @@ class ResponseParser:
             amount=amount,
             is_all_in=is_all_in_flag,
         )
+
+    @staticmethod
+    def _get_field(data: dict, *keys: str) -> Optional[str]:
+        """从 JSON 字典中获取字段值（支持多个候选键名）。
+
+        按顺序尝试每个 key，返回第一个找到的非空值。
+
+        Args:
+            data: JSON 解析后的字典。
+            *keys: 候选字段名列表。
+
+        Returns:
+            字段值字符串，或 None。
+        """
+        for key in keys:
+            value = data.get(key)
+            if value is not None and value != "":
+                return str(value)
+        return None
 
     @classmethod
     def _extract_json(cls, text: str) -> Optional[str]:
@@ -150,7 +190,6 @@ class ResponseParser:
             return text
 
         # 尝试从 markdown 代码块提取
-        # 模式: ```json ... ```
         md_pattern = r"```(?:json)?\s*\n?([\s\S]*?)\n?```"
         match = re.search(md_pattern, text)
         if match:
@@ -174,12 +213,34 @@ class ResponseParser:
 
     @classmethod
     def extract_reasoning(cls, raw_response: str) -> str:
-        """从 LLM 响应中提取推理文本（用于日志/显示）。"""
+        """从 LLM 响应中提取推理文本（用于日志/显示）。
+
+        支持 CoT 格式（含 analysis/分析 字段）和简单格式。
+        """
         json_str = cls._extract_json(raw_response)
         if json_str is None:
             return raw_response[:200]
         try:
             data = json.loads(json_str)
-            return str(data.get("reasoning", ""))
+            # 优先从分析/analysis 字段提取（CoT 格式）
+            for analysis_key in ("分析", "analysis"):
+                analysis = data.get(analysis_key, {})
+                if isinstance(analysis, dict) and analysis:
+                    parts = []
+                    for key in ("手牌评估", "hand_assessment",
+                                "赔率分析", "pot_odds_analysis",
+                                "对手解读", "opponent_read",
+                                "策略计划", "plan"):
+                        val = analysis.get(key, "")
+                        if val:
+                            parts.append(val)
+                    if parts:
+                        return " | ".join(parts)
+            # 降级到理由/reasoning 字段
+            for reason_key in ("理由", "reasoning"):
+                val = data.get(reason_key, "")
+                if val:
+                    return str(val)
+            return ""
         except json.JSONDecodeError:
             return raw_response[:200]
