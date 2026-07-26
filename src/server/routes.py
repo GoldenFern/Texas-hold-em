@@ -6,7 +6,7 @@ import json
 import uuid
 from typing import Any, Dict
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, request, send_file
 
 # 全局游戏管理器引用（在 events.py 中初始化）
 _game_manager: Any = None
@@ -27,8 +27,16 @@ def register_routes(app: Flask) -> None:
 
     @app.route("/")
     def index():
-        """主页 —— 扑克牌桌。"""
-        return render_template("index.html")
+        """主页 —— Vue 构建产物(static/dist)。"""
+        import os
+        dist_index = os.path.join(app.static_folder or "", "dist", "index.html")
+        if not os.path.isfile(dist_index):
+            return (
+                "<h3>前端未构建</h3>"
+                "<p>请先运行: <code>cd frontend && npm install && npm run build</code></p>",
+                503,
+            )
+        return send_file(dist_index)
 
     @app.route("/api/game/state")
     def game_state():

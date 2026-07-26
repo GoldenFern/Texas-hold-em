@@ -31,3 +31,7 @@ Thumbs.db
 
 # pytest
 .pytest_cache/
+
+# Frontend
+frontend/node_modules/
+static/dist/

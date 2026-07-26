@@ -558,10 +558,6 @@ class GameManager:
             return  # 游戏已重建，丢弃过期分析
         state = dict(state)
         state["analysis"] = analysis
-        # 迁移期兼容:平铺双写（Vue 前端上线后删除,见 docs/protocol.md）
-        for key in ("hand_type_probs", "ranking_distribution", "odds_ev",
-                    "pot_financials", "sim_count"):
-            state[key] = analysis[key]
         self._emit("game_update", state)
 
     def _emit_action_required(self, player_name: str) -> None:
