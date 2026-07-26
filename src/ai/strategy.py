@@ -1,257 +1,174 @@
-"""AI 策略引擎 —— 手牌强度、底池赔率、位置评估。
+"""AI 策略引擎 —— 翻前查表与翻后实时胜率。
 
-提供 AI 机器人决策所需的所有基础计算。
-
-翻牌前手牌评分基于预计算的 Monte Carlo 胜率表（模块加载时一次性计算），
-翻牌后手牌强度基于 Treys 加速的 Monte Carlo 实时胜率估算。
+翻牌前胜率查预生成的多人胜率表（scripts/build_preflop_table.py 离线生成,
+惰性加载）;翻牌后用 Treys 快速通道做实时 Monte Carlo。
+平局约定统一为 equity share。
 """
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import os
 import random
+import zlib
 from typing import Dict, List, Optional, Tuple
 
-from src.engine.card import Card, Cards
-from src.engine.hand import HandEvaluator, HandResult
-from src.utils._card_helpers import all_cards, random_hand, detect_draws
-from src.utils.constants import ActionType, GamePhase, Rank, Suit
+from src.engine.card import Cards
+from src.engine.hand import HandEvaluator
+from src.utils._card_helpers import count_outs, detect_draws, treys_ids, treys_pool
 
 logger = logging.getLogger(__name__)
 
-
-# ================================================================
-# 翻牌前手牌胜率表 —— 文件缓存 + 按需预计算
-# ================================================================
-
 _EQUITY_CACHE_FILE = os.path.join(os.path.dirname(__file__), "preflop_equity.json")
+_MAX_OPPONENTS = 8
+
+# 惰性加载的多人胜率表: (high, low, suited) -> [w_vs1, ..., w_vs8]
+_PREFLOP_EQUITY: Optional[Dict[Tuple[int, int, bool], List[float]]] = None
 
 
-def _key_to_str(key: Tuple[int, int, bool]) -> str:
-    """将 (high, low, suited) 元组编码为 JSON 可用的字符串键。"""
-    high, low, suited = key
-    return f"{high},{low},{'1' if suited else '0'}"
+def _load_table() -> Dict[Tuple[int, int, bool], List[float]]:
+    """加载翻前胜率表（仅首次调用时读文件）。
 
-
-def _str_to_key(s: str) -> Tuple[int, int, bool]:
-    """从字符串键还原 (high, low, suited)。"""
-    parts = s.split(",")
-    return int(parts[0]), int(parts[1]), parts[2] == "1"
-
-
-def _load_equity_table() -> Dict[Tuple[int, int, bool], float] | None:
-    """从缓存文件加载胜率表，不存在或损坏时返回 None。"""
-    if not os.path.isfile(_EQUITY_CACHE_FILE):
-        return None
-    try:
-        with open(_EQUITY_CACHE_FILE, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        table = {_str_to_key(k): v for k, v in raw.items()}
-        logger.info("加载翻牌前胜率表缓存：%d 种手牌", len(table))
-        return table
-    except Exception:
-        logger.warning("胜率表缓存文件损坏，将重新计算")
-        return None
-
-
-def _save_equity_table(table: Dict[Tuple[int, int, bool], float]) -> None:
-    """将胜率表保存到缓存文件。"""
-    raw = {_key_to_str(k): v for k, v in table.items()}
-    try:
-        with open(_EQUITY_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(raw, f, ensure_ascii=False)
-        logger.info("翻牌前胜率表已缓存至 %s", _EQUITY_CACHE_FILE)
-    except OSError as e:
-        logger.warning("胜率表缓存写入失败：%s", e)
-
-
-def _build_preflop_equity_table() -> Dict[Tuple[int, int, bool], float]:
-    """构建 169 种起手牌的翻牌前胜率表（vs 1 个随机对手）。
-
-    使用 Treys 加速的 Monte Carlo 模拟，每种手牌 500 次模拟。
-    计算结果会缓存到 JSON 文件，后续启动直接读取。
+    Raises:
+        FileNotFoundError: 表文件缺失（需先运行生成脚本）。
+        ValueError: 表文件是旧版单人格式或已损坏。
     """
-    # 先尝试读取缓存
-    cached = _load_equity_table()
-    if cached is not None:
-        return cached
+    global _PREFLOP_EQUITY
+    if _PREFLOP_EQUITY is not None:
+        return _PREFLOP_EQUITY
 
-    ranks = list(Rank)
-    rng = random.Random(42)
-    num_sim = 500
-    table: Dict[Tuple[int, int, bool], float] = {}
+    if not os.path.isfile(_EQUITY_CACHE_FILE):
+        raise FileNotFoundError(
+            f"翻前胜率表缺失: {_EQUITY_CACHE_FILE}\n"
+            "请先运行: python scripts/build_preflop_table.py"
+        )
+    with open(_EQUITY_CACHE_FILE, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    if not isinstance(raw, dict) or "table" not in raw:
+        raise ValueError(
+            "翻前胜率表为旧版格式，请重新生成: "
+            "python scripts/build_preflop_table.py"
+        )
 
-    logger.info("构建翻牌前胜率表（169 种起手牌 × %d 次模拟）...", num_sim)
+    table: Dict[Tuple[int, int, bool], List[float]] = {}
+    for key_str, values in raw["table"].items():
+        h, l, s = key_str.split(",")
+        table[(int(h), int(l), s == "1")] = list(values)
 
-    for i, r1 in enumerate(ranks):
-        for j, r2 in enumerate(ranks):
-            if i < j:
-                continue  # 只处理 canonical 形式 (high, low)，high 索引 >= low
-
-            high = r1.value
-            low = r2.value
-            is_pair = (high == low)
-
-            # 非同花
-            card_a = Card(rank=r1, suit=Suit.CLUBS)
-            card_b = Card(rank=r2, suit=Suit.DIAMONDS)
-            hand = [card_a, card_b]
-            key_offsuit = (high, low, False)
-            table[key_offsuit] = _simulate_equity(hand, rng, num_sim)
-
-            # 同花（只有非对子时才需要独立计算）
-            if not is_pair:
-                card_b2 = Card(rank=r2, suit=Suit.CLUBS)
-                hand_suited = [card_a, card_b2]
-                key_suited = (high, low, True)
-                table[key_suited] = _simulate_equity(hand_suited, rng, num_sim)
-
-    logger.info("翻牌前胜率表构建完成：%d 种手牌", len(table))
-
-    # 写入缓存
-    _save_equity_table(table)
-
+    logger.info("翻前胜率表已加载: %d 种手牌 × vs 1..%d 对手",
+                len(table), _MAX_OPPONENTS)
+    _PREFLOP_EQUITY = table
     return table
 
 
-def _simulate_equity(
-    hand: List[Card],
-    rng: random.Random,
-    num_sim: int,
-) -> float:
-    """模拟一手牌 vs 随机对手 + 随机公共牌的胜率。"""
-    wins = 0.0
-    for _ in range(num_sim):
-        opponent = random_hand(rng, hand)
-        sim_community = _random_community(hand + opponent, rng)
-        result_a = HandEvaluator.evaluate(hand + sim_community)
-        result_b = HandEvaluator.evaluate(opponent + sim_community)
-        if result_a > result_b:
-            wins += 1.0
-        elif result_a == result_b:
-            wins += 0.5
-    return round(wins / num_sim * 100.0, 1)
-
-
-def _random_community(exclude: List[Card], rng: random.Random) -> List[Card]:
-    """从排除指定牌后的牌堆中随机抽取 5 张公共牌。"""
-    excluded = {c.short_str for c in exclude}
-    available = [
-        Card(rank=r, suit=s)
-        for r, s in itertools.product(Rank, Suit)
-        if Card(rank=r, suit=s).short_str not in excluded
-    ]
-    return rng.sample(available, 5)
-
-
-# 模块级预计算表（导入时执行）
-_PREFLOP_EQUITY: Dict[Tuple[int, int, bool], float] = _build_preflop_equity_table()
-
-
 # ================================================================
-# 翻牌前手牌强度（0–100）—— 基于真实胜率
+# 翻牌前手牌强度 —— 多人真实胜率查表
 # ================================================================
 
-def preflop_hand_strength(cards: Cards) -> int:
-    """评估翻牌前手牌强度（0–100），基于真实胜率。
+def preflop_hand_strength(cards: Cards, n_opponents: int = 1) -> float:
+    """翻牌前 equity share（0–100）,查多人胜率表。
 
-    对 2 张底牌，返回 vs 1 个随机对手的 Monte Carlo 胜率 × 100。
-    未覆盖的组合默认返回 32（最差手牌的胜率）。
+    Args:
+        cards: 两张底牌。
+        n_opponents: 对手数量（1–8, 越界自动钳位）。
+
+    Returns:
+        对阵 n 个随机对手的 equity share × 100（浮点,不截断）。
     """
     if len(cards) != 2:
-        return 0
+        return 0.0
 
     r1, r2 = cards[0].rank.value, cards[1].rank.value
     suited = cards[0].suit == cards[1].suit
+    key = (max(r1, r2), min(r1, r2), suited)
 
-    high = max(r1, r2)
-    low = min(r1, r2)
-    key = (high, low, suited)
-
-    if key in _PREFLOP_EQUITY:
-        return int(_PREFLOP_EQUITY[key])
-
-    # fallback（不应到达）
-    return 32
+    table = _load_table()
+    n = max(1, min(_MAX_OPPONENTS, n_opponents))
+    return table[key][n - 1]
 
 
 # ================================================================
-# 翻牌后手牌强度（0.0–1.0）—— 实时 Monte Carlo 胜率
+# 翻牌后手牌强度 —— Treys 快速 MC（可注入 RNG）
 # ================================================================
 
 def postflop_hand_strength(
     hole_cards: Cards,
     community_cards: Cards,
     num_simulations: int = 300,
+    rng: Optional[random.Random] = None,
 ) -> float:
-    """评估翻牌后手牌强度（0.0–1.0），基于实时 Monte Carlo 胜率。
+    """翻牌后 equity share（0.0–1.0）, vs 1 个随机对手。
 
-    对已知公共牌进行随机补全模拟，计算 vs 1 个随机对手的胜率。
+    转牌圈对全部剩余河牌精确枚举以降低方差。
+    未提供 rng 时按输入状态派生确定性种子（同输入同输出）。
 
     Args:
         hole_cards: 底牌（2 张）。
-        community_cards: 已知公共牌（0–5 张）。
-        num_simulations: 模拟次数（默认 300，已够用）。
+        community_cards: 公共牌（3–5 张; 少于 3 张时回退翻前查表）。
+        num_simulations: 目标模拟次数。
+        rng: 可选注入的随机数生成器。
 
     Returns:
-        0.0–1.0 的实际胜率。
+        0.0–1.0 的 equity share。
     """
-    if len(community_cards) == 0:
+    if len(community_cards) < 3:
         return preflop_hand_strength(hole_cards) / 100.0
 
-    all_cards = hole_cards + community_cards
-    if len(all_cards) < 5:
-        return preflop_hand_strength(hole_cards) / 100.0
-
-    rng = random.Random()
-    excluded = {c.short_str for c in all_cards}
-
-    # 对手随机手牌
-    available_hole = [
-        Card(rank=r, suit=s)
-        for r, s in itertools.product(Rank, Suit)
-        if Card(rank=r, suit=s).short_str not in excluded
-    ]
-    if len(available_hole) < 2:
-        return preflop_hand_strength(hole_cards) / 100.0
-
-    # 剩余公共牌
-    needed = 5 - len(community_cards)
-    available_community = [
-        Card(rank=r, suit=s)
-        for r, s in itertools.product(Rank, Suit)
-        if Card(rank=r, suit=s).short_str not in excluded
-    ]
-
-    wins = 0.0
-    for _ in range(num_simulations):
-        opponent = rng.sample(available_hole, 2)
-        # 对手手牌也需要从社区牌池中排除
-        opponent_excluded = excluded.copy()
-        opponent_excluded.update(c.short_str for c in opponent)
-        available_community_filtered = [
-            c for c in available_community
-            if c.short_str not in opponent_excluded
-        ]
-        sim_board = (
-            list(community_cards)
-            + rng.sample(available_community_filtered, needed)
+    if rng is None:
+        state = (
+            tuple(sorted(c.short_str for c in hole_cards)),
+            tuple(sorted(c.short_str for c in community_cards)),
+            num_simulations,
         )
-        result_hero = HandEvaluator.evaluate(hole_cards + sim_board)
-        result_villain = HandEvaluator.evaluate(opponent + sim_board)
-        if result_hero > result_villain:
-            wins += 1.0
-        elif result_hero == result_villain:
-            wins += 0.5
+        rng = random.Random(zlib.crc32(repr(state).encode("utf-8")))
 
-    return round(wins / num_simulations, 4)
+    hero = treys_ids(hole_cards)
+    board_known = treys_ids(community_cards)
+    pool = treys_pool(list(hole_cards) + list(community_cards))
+    needed = 5 - len(board_known)
+
+    from src.analysis.battle_analyzer import _treys  # 复用全局求值器
+    evaluate = _treys.evaluate
+
+    equity_sum = 0.0
+    total = 0
+
+    if needed == 1:
+        # 转牌: 抽对手 × 精确枚举河牌
+        outer = max(1, num_simulations // (len(pool) - 2))
+        for _ in range(outer):
+            opp = rng.sample(pool, 2)
+            opp_set = set(opp)
+            for river in pool:
+                if river in opp_set:
+                    continue
+                board = board_known + [river]
+                hs = evaluate(hero, board)
+                os_ = evaluate(opp, board)
+                if hs < os_:
+                    equity_sum += 1.0
+                elif hs == os_:
+                    equity_sum += 0.5
+                total += 1
+    else:
+        for _ in range(num_simulations):
+            drawn = rng.sample(pool, 2 + needed)
+            opp = drawn[:2]
+            board = board_known + drawn[2:]
+            hs = evaluate(hero, board)
+            os_ = evaluate(opp, board)
+            if hs < os_:
+                equity_sum += 1.0
+            elif hs == os_:
+                equity_sum += 0.5
+            total += 1
+
+    return round(equity_sum / max(1, total), 4)
 
 
 # ================================================================
-# 听牌检测
+# 听牌检测（委托 _card_helpers）
 # ================================================================
 
 def has_draw(hole_cards: Cards, community_cards: Cards) -> Tuple[bool, bool]:
@@ -265,35 +182,9 @@ def has_draw(hole_cards: Cards, community_cards: Cards) -> Tuple[bool, bool]:
     return detect_draws(hole_cards, community_cards)
 
 
-# ================================================================
-# 底池赔率 & 位置价值
-# ================================================================
-
-def calculate_pot_odds(call_amount: int, pot_total: int) -> float:
-    """计算底池赔率。
-
-    Returns:
-        跟注所需的最低胜率（0.0–1.0）。
-    """
-    if pot_total + call_amount == 0:
-        return 0.0
-    return call_amount / (pot_total + call_amount)
-
-
-def position_value(seat: int, dealer_seat: int, num_players: int) -> float:
-    """计算位置价值（0.0–1.0，越高越好）。
-
-    BTN = 1.0（翻牌后最后行动）, UTG ≈ 0.0（翻牌后最先行动）。
-    单挑时非庄位返回 0.5。
-    """
-    relative_pos = (seat - dealer_seat) % num_players
-    if num_players <= 2:
-        return 0.5 if relative_pos != 0 else 1.0
-    if relative_pos == 0:
-        return 1.0  # BTN = 最佳位置
-    # relative_pos 越大 → 越晚行动 → 位置越好
-    # relative_pos=1 = UTG（最差）, relative_pos=N-1 = CO（最佳，仅次于 BTN）
-    return round((relative_pos - 1) / (num_players - 2), 2)
+def draw_info(hole_cards: Cards, community_cards: Cards):
+    """完整听牌信息（含 outs 计数）,供 LLM prompt 与分析面板。"""
+    return count_outs(hole_cards, community_cards)
 
 
 # ================================================================
@@ -301,49 +192,13 @@ def position_value(seat: int, dealer_seat: int, num_players: int) -> float:
 # ================================================================
 
 def is_premium_hand(cards: Cards) -> bool:
-    """是否为顶级手牌（胜率 >= 70% vs 随机手牌）。
+    """是否为顶级手牌（vs 1 对手 equity >= 70%）。
 
-    典型覆盖：AA(85), KK(82), QQ(80), JJ(77), AKs(67)...
-    阈值 70 覆盖 AA/KK/QQ/JJ。
+    按当前表覆盖 AA/KK/QQ/JJ/TT/99/88 等所有 >=70 的口袋对。
     """
-    strength = preflop_hand_strength(cards)
-    return strength >= 70
+    return preflop_hand_strength(cards) >= 70.0
 
 
 def is_playable_hand(cards: Cards) -> bool:
-    """是否为可玩手牌（胜率 >= 45% vs 随机手牌）。"""
-    strength = preflop_hand_strength(cards)
-    return strength >= 45
-
-
-# ================================================================
-# 动作随机化
-# ================================================================
-
-def randomize_action(
-    actions: List[Tuple[ActionType, float]],
-    rng: Optional[random.Random] = None,
-) -> ActionType:
-    """按权重随机选择一个动作。
-
-    Args:
-        actions: (动作类型, 权重) 列表。
-        rng: 可选的随机数生成器。
-
-    Returns:
-        按权重随机选中的动作类型。
-    """
-    if rng is None:
-        rng = random.Random()
-
-    total = sum(w for _, w in actions)
-    if total <= 0:
-        return actions[0][0] if actions else ActionType.FOLD
-
-    r = rng.random() * total
-    cumulative = 0.0
-    for action, weight in actions:
-        cumulative += weight
-        if r <= cumulative:
-            return action
-    return actions[-1][0]
+    """是否为可玩手牌（vs 1 对手 equity >= 45%）。"""
+    return preflop_hand_strength(cards) >= 45.0
