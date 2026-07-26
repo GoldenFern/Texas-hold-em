@@ -126,6 +126,94 @@ class BattleAnalyzer:
             "sim_count": num_sims,
         }
 
+    def analyze_snapshot(
+        self,
+        hole_cards: Cards,
+        community_cards: Cards,
+        active_opponent_count: int,
+        pot_total: int,
+        to_call: int,
+        player_chips: int,
+        dead_money: int = 0,
+        sunk_cost: int = 0,
+    ) -> dict:
+        """从纯数值快照执行完整分析（无需 game/player 活对象）。
+
+        供服务器在锁外调用：锁内抓取数值快照，锁外跑 MC 与赔率计算,
+        避免在持锁状态下做重计算,也避免锁外读活对象产生竞态。
+
+        Args:
+            hole_cards: Hero 底牌。
+            community_cards: 公共牌。
+            active_opponent_count: 仍在局中的对手数。
+            pot_total: 底池总额。
+            to_call: 需跟注额（未裁剪）。
+            player_chips: Hero 剩余筹码。
+            dead_money: 弃牌玩家的死钱。
+            sunk_cost: Hero 本手已投入。
+
+        Returns:
+            与 analyze() 相同结构的分析字典。
+        """
+        n_community = len(community_cards)
+        num_sims = self.preflop_sims if n_community == 0 else self.postflop_sims
+
+        if num_sims <= 0 or active_opponent_count <= 0:
+            hand_type_probs: Dict[str, float] = {}
+            ranking_dist: List[dict] = []
+        else:
+            hand_type_probs, ranking_dist = self._mc_cached(
+                hole_cards, community_cards, active_opponent_count, num_sims,
+            )
+
+        # 赔率/EV（复用 _calc_odds_ev 的口径,基于快照数值）
+        equity_share = 0.0
+        win_rate_display = 0.0
+        mc_samples = 0
+        for entry in ranking_dist:
+            if entry.get("rank") == -1:
+                equity_share = entry["prob"] / 100.0
+                mc_samples = entry.get("samples", 0)
+            elif entry.get("rank") == 1:
+                win_rate_display = entry["prob"] / 100.0
+
+        clamped_call = max(0, min(to_call, player_chips))
+        if clamped_call > 0:
+            pot_odds_ratio = round(pot_total / clamped_call, 2)
+            required_equity = round(pot_odds(clamped_call, pot_total) * 100, 1)
+            ev = round(equity_share * (pot_total + clamped_call) - clamped_call, 2)
+            ev_judgment = "正期望 [+EV]" if ev >= 0 else "负期望 [-EV]"
+            has_call = True
+        else:
+            pot_odds_ratio = 0.0
+            required_equity = 0.0
+            ev = round(equity_share * pot_total, 2)
+            ev_judgment = "免跟注 · 底池权益"
+            has_call = False
+
+        return {
+            "hand_type_probs": hand_type_probs,
+            "ranking_distribution": ranking_dist,
+            "odds_ev": {
+                "win_rate": round(win_rate_display * 100, 1),
+                "equity": round(equity_share * 100, 1),
+                "ci_95": mc_ci95(equity_share, mc_samples),
+                "pot_odds_ratio": pot_odds_ratio,
+                "required_equity": required_equity,
+                "ev": ev,
+                "ev_judgment": ev_judgment,
+                "to_call": clamped_call,
+                "has_call_decision": has_call,
+            },
+            "pot_financials": {
+                "pot_total": pot_total,
+                "dead_money": dead_money,
+                "sunk_cost": sunk_cost,
+                "to_call": to_call,
+            },
+            "sim_count": num_sims,
+        }
+
     # ---- 蒙特卡洛模拟（单循环，Treys 整数热路径） ----
 
     def _mc_cached(

@@ -114,6 +114,32 @@ PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
 }
 
 
+_EXTRA_ALLOWED_BASE_URLS = {
+    "https://api.anthropic.com",
+    "https://api.openai.com/v1",
+    "https://api.openai.com",
+}
+
+
+def is_allowed_base_url(base_url: str) -> bool:
+    """校验 base_url 是否允许（防 SSRF / 密钥外传到任意端点）。
+
+    允许: 空串（使用 Provider 预设）、各 Provider 官方预设地址、
+    Anthropic/OpenAI 官方地址、本机地址（Ollama 等本地部署）。
+    """
+    if not base_url:
+        return True
+    url = base_url.rstrip("/")
+    presets = {p["base_url"].rstrip("/") for p in PROVIDER_PRESETS.values()}
+    if url in presets or url in {u.rstrip("/") for u in _EXTRA_ALLOWED_BASE_URLS}:
+        return True
+    for prefix in ("http://127.0.0.1", "http://localhost",
+                   "https://127.0.0.1", "https://localhost"):
+        if url == prefix or url.startswith(prefix + ":") or url.startswith(prefix + "/"):
+            return True
+    return False
+
+
 def _find_project_root() -> Path:
     """查找项目根目录（包含 src/ 的目录）。"""
     current = Path(__file__).resolve().parent

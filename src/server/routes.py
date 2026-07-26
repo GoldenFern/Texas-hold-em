@@ -38,66 +38,6 @@ def register_routes(app: Flask) -> None:
             return jsonify({"error": "没有活跃的游戏"}), 404
         return jsonify(mgr.game.to_dict())
 
-    @app.route("/api/game/new", methods=["POST"])
-    def new_game():
-        """创建新游戏。"""
-        mgr = get_game_manager()
-        if mgr is None:
-            return jsonify({"error": "服务器未就绪"}), 500
-
-        data = request.get_json() or {}
-        player_name = data.get("player_name", "Player")
-        bot_configs = data.get("bots", [
-            {"style": "COOL", "name": "偏冷"},
-            {"style": "WARM", "name": "偏热"},
-            {"style": "COLD", "name": "极冷"},
-            {"style": "HOT", "name": "炎热"},
-            {"style": "CHAOS", "name": "混沌"},
-        ])
-        starting_chips = data.get("starting_chips", 1000)
-        small_blind = data.get("small_blind", 5)
-        big_blind = data.get("big_blind", 10)
-        ante = data.get("ante", 0)
-        betting_structure = data.get("betting_structure", "no_limit")
-
-        mgr.create_game(
-            player_name=player_name,
-            bot_configs=bot_configs,
-            starting_chips=starting_chips,
-            small_blind=small_blind,
-            big_blind=big_blind,
-            ante=ante,
-            betting_structure=betting_structure,
-        )
-
-        return jsonify({"status": "ok", "message": "游戏已创建"})
-
-    @app.route("/api/game/action", methods=["POST"])
-    def player_action():
-        """处理玩家动作。"""
-        mgr = get_game_manager()
-        if mgr is None or mgr.game is None:
-            return jsonify({"error": "没有活跃的游戏"}), 404
-
-        data = request.get_json() or {}
-        action_type = data.get("action")
-        amount = data.get("amount", 0)
-
-        from src.utils.constants import ActionType
-        action_map = {
-            "fold": ActionType.FOLD,
-            "check": ActionType.CHECK,
-            "call": ActionType.CALL,
-            "bet": ActionType.BET,
-            "raise": ActionType.RAISE,
-        }
-
-        if action_type not in action_map:
-            return jsonify({"error": f"无效动作: {action_type}"}), 400
-
-        mgr.handle_human_action(action_map[action_type], amount)
-        return jsonify({"status": "ok"})
-
     @app.route("/api/game/history")
     def game_history():
         """获取牌局历史。"""
@@ -145,17 +85,14 @@ def register_routes(app: Flask) -> None:
         if mgr is None or not mgr.bots:
             return jsonify({"bots": [], "message": "没有活跃的游戏"})
         from src.llm.llm_bot import LLMBot
-        bots_info = []
-        for name, bot in mgr.bots.items():
-            is_llm = isinstance(bot, LLMBot)
-            info = {
+        bots_info = [
+            {
                 "name": name,
-                "type": "LLM" if is_llm else "Rule",
+                "type": "LLM" if isinstance(bot, LLMBot) else "Rule",
                 "repr": repr(bot),
             }
-            if is_llm:
-                info["stats"] = bot.decision_stats
-            bots_info.append(info)
+            for name, bot in mgr.bots.items()
+        ]
         return jsonify({"bots": bots_info})
 
     @app.route("/api/game/llm_context")
@@ -193,26 +130,39 @@ def register_routes(app: Flask) -> None:
 
     @app.route("/api/config/llm", methods=["POST"])
     def set_llm_config():
-        """保存 LLM 配置。"""
-        from src.llm.config import LLMConfig, ProviderConfig, save_config, load_config
+        """保存 LLM 配置。
+
+        api_key 语义: "***" = 保留现有值; "" = 清除; 其他 = 更新。
+        base_url 仅接受各 Provider 官方预设或本地地址（防 SSRF /
+        密钥外传到任意端点）。
+        """
+        from src.llm.config import (
+            LLMConfig, ProviderConfig, save_config, load_config,
+            is_allowed_base_url,
+        )
         data = request.get_json() or {}
 
         primary_data = data.get("primary", {})
         raw_key = primary_data.get("api_key", "")
-        # 保护：掩码值 "***" 表示前端未修改密钥，保留已有值
-        if raw_key == "***" or raw_key == "":
-            existing = load_config()
-            actual_key = existing.primary.api_key  # 保留现有密钥
+        if raw_key == "***":
+            actual_key = load_config().primary.api_key  # 未修改,保留
         else:
-            actual_key = raw_key
+            actual_key = raw_key  # 含空串 = 显式清除
+
+        base_url = primary_data.get("base_url", "")
+        if not is_allowed_base_url(base_url):
+            return jsonify({
+                "status": "error",
+                "message": f"base_url 不在允许列表中: {base_url}",
+            }), 400
+
         primary = ProviderConfig(
             provider=primary_data.get("provider", "deepseek"),
             model=primary_data.get("model", "deepseek-v4-pro"),
             api_key=actual_key,
-            base_url=primary_data.get("base_url", ""),
+            base_url=base_url,
             timeout_seconds=float(primary_data.get("timeout_seconds", 60.0)),
             temperature=float(primary_data.get("temperature", 0.5)),
-            max_tokens=100000,
             reasoning_effort=primary_data.get("reasoning_effort", ""),
         )
 

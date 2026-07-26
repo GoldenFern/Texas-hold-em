@@ -12,7 +12,7 @@ import argparse
 import sys
 
 
-def run_server(host: str = "0.0.0.0", port: int = 5000, debug: bool = False) -> None:
+def run_server(host: str = "127.0.0.1", port: int = 5000, debug: bool = False) -> None:
     """启动 Flask + SocketIO Web 服务器。"""
     try:
         from src.llm.langchain_client import configure_llm_traffic_logging
@@ -109,7 +109,8 @@ def main() -> None:
     parser.add_argument("--cli", action="store_true", help="命令行 AI 对战模式")
     parser.add_argument("--test", action="store_true", help="运行全部测试")
     parser.add_argument("--hands", type=int, default=10, help="CLI 模式下的手牌数")
-    parser.add_argument("--host", default="0.0.0.0", help="服务器主机")
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="服务器主机（默认仅本机;局域网访问用 0.0.0.0）")
     parser.add_argument("--port", type=int, default=5000, help="服务器端口")
     parser.add_argument("--debug", action="store_true", help="调试模式")
 

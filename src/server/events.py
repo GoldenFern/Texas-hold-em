@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-import threading
 from threading import Event, Lock
 from typing import Any, Dict, List, Optional
 
@@ -13,19 +11,27 @@ from flask_socketio import SocketIO
 from src.engine.game import Action, ActionType, BettingStructure, GameState
 from src.engine.hand import HandEvaluator
 from src.engine.player import Player
-from src.ai.bots import BoltzmannBot, BotFactory, BotStyle
+from src.ai.bots import BotFactory, BotStyle
 from src.analysis.battle_analyzer import BattleAnalyzer
 from src.analysis.reporter import HandReporter
 from src.server.routes import set_game_manager
 
-# 全局 SocketIO 实例
+# 人类玩家行动超时（秒），超时自动过牌/弃牌
+HUMAN_ACTION_TIMEOUT = 60.0
+
+# 兼容旧代码的模块级引用（register_events 时赋值；新代码用实例属性）
 socketio: Optional[SocketIO] = None
 
 
 class GameManager:
-    """管理游戏生命周期、人类玩家与 AI 机器人。"""
+    """管理游戏生命周期、人类玩家与 AI 机器人。
 
-    def __init__(self) -> None:
+    Args:
+        sio: SocketIO 实例（构造注入，便于测试与未来多会话扩展）。
+    """
+
+    def __init__(self, sio: Optional[SocketIO] = None) -> None:
+        self._socketio: Optional[SocketIO] = sio
         self.game: Optional[GameState] = None
         self.bots: Dict[str, Any] = {}
         self.human_player_name: str = ""
@@ -38,6 +44,38 @@ class GameManager:
         self._hand_continue_event = Event()
         self._replay_history: List[dict] = []  # 所有已完成手牌的完整回放数据
         self._game_generation: int = 0  # 递增的游戏代际，防竞态
+
+    def attach_socketio(self, sio: SocketIO) -> None:
+        """注入 SocketIO 实例。"""
+        self._socketio = sio
+
+    # ---- 通信单点（未来加 room= 只改这里） ----
+
+    def _emit(self, event: str, payload: Optional[dict] = None) -> None:
+        """向本会话的所有客户端广播事件。"""
+        if self._socketio is not None:
+            self._socketio.emit(event, payload if payload is not None else {})
+
+    def _wait_event(self, event: Event, timeout: Optional[float] = None) -> bool:
+        """协程安全地等待 Event。
+
+        eventlet green thread 中不可用阻塞式 Event.wait（会卡死事件循环），
+        以 socketio.sleep(0.1) 粒度轮询。
+
+        Returns:
+            True 表示事件已置位；False 表示超时或循环被终止。
+        """
+        if self._socketio is None:
+            return event.is_set()
+        waited = 0.0
+        while self._bot_running:
+            if event.is_set():
+                return True
+            self._socketio.sleep(0.1)
+            waited += 0.1
+            if timeout is not None and waited >= timeout:
+                return False
+        return False
 
     @staticmethod
     def _sanitize_name(name: str, max_len: int = 20) -> str:
@@ -56,8 +94,12 @@ class GameManager:
         big_blind: int = 10,
         ante: int = 0,
         betting_structure: str = "no_limit",
-    ) -> None:
-        """创建新游戏。"""
+    ) -> tuple:
+        """创建新游戏。
+
+        Returns:
+            (成功与否, 失败原因)。
+        """
         with self._lock:
             # 停止旧的 Bot 循环并递增代际
             self._bot_running = False
@@ -81,8 +123,12 @@ class GameManager:
             # 机器人玩家
             for i, cfg in enumerate(bot_configs):
                 style_name = cfg.get("style", "BALANCED")
-                bot_name = cfg.get("name", f"Bot{i+1}")
-                style = BotStyle(style_name)
+                # Bot 名与人类名同样清理（XSS 源头之一）
+                bot_name = self._sanitize_name(cfg.get("name", f"Bot{i+1}"))
+                try:
+                    style = BotStyle(style_name)
+                except ValueError:
+                    return False, f"无效的机器人风格: {style_name}"
 
                 # LLM 机器人特殊处理
                 if style == BotStyle.LLM or cfg.get("llm_config"):
@@ -147,27 +193,28 @@ class GameManager:
 
             # 启动 Bot 循环（作为 SocketIO 后台 green thread）
             self._start_bot_loop()
+        return True, ""
 
-    def handle_human_action(self, action_type: ActionType, amount: int = 0) -> bool:
+    def handle_human_action(self, action_type: ActionType, amount: int = 0) -> tuple:
         """处理人类玩家的动作。
 
         Returns:
-            True 如果动作被成功处理。
+            (成功与否, 失败原因)。失败原因用于 action_rejected 事件。
         """
         with self._lock:
             if self.game is None:
-                return False
+                return False, "没有进行中的游戏"
 
             game = self.game
             player = self._get_human_player()
-            if player is None or player.name != game.players[game.current_player_index].name:
-                print(f"[Game] 不是人类玩家的回合（当前: {game.players[game.current_player_index].name}）")
-                return False
+            current = game.players[game.current_player_index]
+            if player is None or player.name != current.name:
+                return False, f"不是你的回合（当前: {current.name}）"
 
             legal = game.get_legal_actions(player)
             if action_type not in legal:
-                print(f"[Game] 非法动作 {action_type.name}, 合法: {[a.name for a in legal]}")
-                return False
+                legal_names = [a.name for a in legal]
+                return False, f"非法动作 {action_type.name}（合法: {legal_names}）"
 
             # 构造金额
             if action_type in (ActionType.BET, ActionType.RAISE):
@@ -186,177 +233,202 @@ class GameManager:
             # 唤醒 Bot 循环继续处理
             self._bot_wake_event.set()
 
-            return True
+            return True, ""
 
     def _start_bot_loop(self) -> None:
         """启动 Bot 循环作为 SocketIO 后台 green thread。"""
-        if socketio is None:
+        if self._socketio is None:
             return
         if self._bot_running:
             self._bot_wake_event.set()
             return
 
         self._bot_running = True
-        self._bot_generation = self._game_generation  # 记录启动时的代际
-        socketio.start_background_task(self._bot_loop)
+        self._socketio.start_background_task(self._bot_loop)
 
     def _bot_loop(self) -> None:
-        """Bot 主循环 —— 运行在 Eventlet green thread 中。"""
-        if socketio is None:
+        """Bot 主循环 —— 运行在 Eventlet green thread 中。
+
+        任何未捕获异常都会以 game_error 事件上报并保持循环存活,
+        避免静默冻结整局游戏。
+        """
+        if self._socketio is None:
             return
-        _sleep = socketio.sleep  # Eventlet 协程式 sleep
-        my_generation = self._game_generation  # 本循环的代际标识
+        my_generation = self._game_generation
 
         while self._bot_running:
-            # 代际校验：如果游戏已重建，本循环立即退出
             if self._game_generation != my_generation:
                 return
+            try:
+                should_exit = self._bot_loop_step()
+                if should_exit:
+                    return
+            except Exception as e:  # noqa: BLE001 —— 循环级兜底,必须上报而非崩溃
+                import traceback
+                traceback.print_exc()
+                self._emit("game_error", {"message": f"服务器内部错误: {e}"})
+                self._socketio.sleep(1.0)
 
-            # 检查是否需要等待人类玩家
-            need_wait = False
-            with self._lock:
-                if self.game is None:
-                    break
-                game = self.game
-                if game.phase.value >= 6:  # FINISHED
-                    need_wait = False
-                else:
-                    cp = game.players[game.current_player_index]
-                    if cp.is_human:
-                        self._emit_action_required(cp.name)
-                        self._bot_wake_event.clear()
-                        need_wait = True
-                    else:
-                        need_wait = False
+    def _bot_loop_step(self) -> bool:
+        """执行循环的一轮。
 
-            if need_wait:
-                # 轮询等待（每 0.5s 检查一次），最长等 60s
-                waited = 0
-                while self._bot_running and not self._bot_wake_event.is_set():
-                    _sleep(0.5)
-                    waited += 0.5
-                    if waited >= 60:
-                        print("[BotLoop] 等待人类行动超时，继续检查...")
-                        break
-                continue
+        Returns:
+            True 表示循环应退出。
+        """
+        _sleep = self._socketio.sleep
 
-            # 处理手牌结束 → 自动开始下一手
-            hand_ended = False
-            game_over = False
-            with self._lock:
-                if self.game is None:
-                    break
-                game = self.game
-                if game.phase.value >= 6:
-                    active = [p for p in game.players if p.chips > 0]
-                    if len(active) >= 2:
-                        # 手牌结束 → 暂停等待用户选择
-                        self._broadcast_state()
-                        self._emit_hand_completed()
-                        self._hand_paused = True
-                        self._hand_continue_event.clear()
-                        hand_ended = True
-                    else:
-                        self._broadcast_state()
-                        self._emit_game_over()
-                        game_over = True
-
-            if game_over:
-                break
-
-            if hand_ended:
-                # 在锁外轮询等待用户点击"继续"或"结束"。
-                # 必须用 socketio.sleep（协程友好）而非 threading.Event.wait，
-                # 否则会阻塞 eventlet 事件循环，导致 HTTP 请求（如回放接口）无法处理。
-                while self._bot_running and self._hand_paused:
-                    _sleep(0.5)
-                if not self._bot_running:
-                    break
-                # 用户选择继续 → 开始下一手
-                with self._lock:
-                    if self.game is None:
-                        break
-                    self.game.start_new_hand()
-                    self._broadcast_state()
-                continue
-
-            # 手牌进行中，当前是机器人 → 延迟以模拟思考时间
-            _sleep(1.0)
-
-            # 重新获取锁，确认当前玩家和机器人
-            with self._lock:
-                if self.game is None:
-                    break
-                game = self.game
-                if game.phase.value >= 6:
-                    continue
+        # 阶段 1: 判断当前局面（锁内快照）
+        need_wait_human = False
+        with self._lock:
+            if self.game is None:
+                return True
+            game = self.game
+            if game.phase.value < 6:
                 cp = game.players[game.current_player_index]
                 if cp.is_human:
-                    continue
-                bot = self.bots.get(cp.name)
-                if bot is None:
-                    print(f"[BotLoop] 警告: 找不到机器人 '{cp.name}'，跳过")
-                    continue
-                is_llm_bot = self._is_llm_bot(bot)
-                # 快照 LLM 决策上下文（锁外 API 调用后需校验无竞态）
-                llm_hand_id = game.hand_id
-                llm_player_name = cp.name
-                llm_generation = self._game_generation
+                    self._bot_wake_event.clear()
+                    self._emit_action_required(cp.name)
+                    need_wait_human = True
 
-            # LLM 机器人决策在锁外执行（API 调用可能耗时较长）
-            if is_llm_bot:
-                action = bot.decide(game, cp)
-            else:
-                action = None  # 规则机器人在锁内决策
+        # 阶段 2: 等人类行动（事件驱动 + 超时自动过牌/弃牌）
+        if need_wait_human:
+            acted = self._wait_event(self._bot_wake_event, HUMAN_ACTION_TIMEOUT)
+            if not acted and self._bot_running:
+                self._auto_act_for_human()
+            return False
 
-            # 应用动作（锁内）—— 校验代际/手牌/玩家是否仍匹配
+        # 阶段 3: 手牌结束处理
+        hand_ended = False
+        with self._lock:
+            if self.game is None:
+                return True
+            game = self.game
+            if game.phase.value >= 6:
+                active = [p for p in game.players if p.chips > 0]
+                self._broadcast_state()
+                if len(active) >= 2:
+                    self._emit_hand_completed()
+                    self._hand_paused = True
+                    self._hand_continue_event.clear()
+                    hand_ended = True
+                else:
+                    self._emit_game_over()
+                    return True
+
+        if hand_ended:
+            # 等待用户点击"继续"或"结束"（事件驱动,无超时）
+            self._wait_event(self._hand_continue_event)
+            if not self._bot_running:
+                return True
             with self._lock:
-                if self.game is None or not self._bot_running:
-                    break
-                # 代际校验：游戏已重建则丢弃 LLM 结果
-                if self._game_generation != llm_generation:
-                    continue
-                game = self.game
-                if game.phase.value >= 6:
-                    continue
-                # 手牌/玩家校验：LLM 返回时局面可能已变化
-                if game.hand_id != llm_hand_id:
-                    continue
-                cp = game.players[game.current_player_index]
-                if cp.is_human or cp.name != llm_player_name:
-                    continue
-                bot = self.bots.get(cp.name)
-                if bot is None:
-                    continue
+                if self.game is None:
+                    return True
+                self.game.start_new_hand()
+                self._broadcast_state()
+            return False
 
-                # 非 LLM 机器人在锁内决策（快速，无网络调用）
-                if not is_llm_bot or action is None:
-                    action = bot.decide(game, cp)
+        # 阶段 4: Bot 决策（锁内快照 → 锁外思考 → 锁内校验应用）
+        with self._lock:
+            if self.game is None:
+                return True
+            game = self.game
+            if game.phase.value >= 6:
+                return False
+            cp = game.players[game.current_player_index]
+            if cp.is_human:
+                return False
+            bot = self.bots.get(cp.name)
+            if bot is None:
+                raise RuntimeError(f"找不到机器人 '{cp.name}'")
+            is_llm_bot = self._is_llm_bot(bot)
+            snap_hand_id = game.hand_id
+            snap_player_name = cp.name
+            snap_generation = self._game_generation
 
-                # 验证合法性
-                legal = game.get_legal_actions(cp)
-                if action.action_type not in legal:
-                    if ActionType.CHECK in legal:
-                        action = Action(cp.name, ActionType.CHECK)
-                    elif ActionType.CALL in legal:
-                        action = Action(cp.name, ActionType.CALL)
-                    else:
-                        action = Action(cp.name, ActionType.FOLD)
+        # 思考指示 + 模拟思考延迟
+        self._emit("bot_thinking", {"player": snap_player_name, "is_llm": is_llm_bot})
+        _sleep(0.4 if not is_llm_bot else 0.1)
 
-                if action.action_type in (ActionType.BET, ActionType.RAISE):
-                    min_raise = game.get_min_raise_amount(cp)
-                    if action.amount < min_raise:
-                        action.amount = min_raise
-                    max_bet = game.get_max_bet(cp)
-                    if action.amount > max_bet:
-                        action.amount = max_bet
-                    action.amount = min(action.amount, cp.chips + cp.current_bet)
+        # LLM 决策在锁外执行（API 调用可能耗时较长）
+        action = None
+        llm_status = None
+        if is_llm_bot:
+            llm_before = bot.llm_decisions
+            action = bot.decide(game, cp)
+            llm_status = "ok" if bot.llm_decisions > llm_before else "fallback"
 
+        # 应用动作（锁内）—— 校验代际/手牌/玩家是否仍匹配
+        with self._lock:
+            if self.game is None or not self._bot_running:
+                return True
+            if self._game_generation != snap_generation:
+                return False
+            game = self.game
+            if game.phase.value >= 6 or game.hand_id != snap_hand_id:
+                return False
+            cp = game.players[game.current_player_index]
+            if cp.is_human or cp.name != snap_player_name:
+                return False
+
+            # 非 LLM 机器人在锁内决策（快速,无网络调用）
+            if action is None:
+                action = bot.decide(game, cp)
+
+            # 引擎是最终权威;这里只做金额精调,非法动作类型据实上报
+            legal = game.get_legal_actions(cp)
+            if action.action_type not in legal:
+                self._emit("game_error", {
+                    "message": (
+                        f"机器人 {cp.name} 给出非法动作 "
+                        f"{action.action_type.name},已降级处理"
+                    ),
+                })
+                fallback = (
+                    ActionType.CHECK if ActionType.CHECK in legal
+                    else ActionType.CALL if ActionType.CALL in legal
+                    else ActionType.FOLD
+                )
+                action = Action(cp.name, fallback)
+
+            if action.action_type in (ActionType.BET, ActionType.RAISE):
+                min_raise = game.get_min_raise_amount(cp)
+                max_bet = game.get_max_bet(cp)
+                action.amount = max(min_raise, min(action.amount, max_bet))
+                action.amount = min(action.amount, cp.chips + cp.current_bet)
                 if action.action_type == ActionType.RAISE and game.current_bet == 0:
                     action = Action(cp.name, ActionType.BET, amount=action.amount)
 
-                game.apply_action(action)
-                self._broadcast_state()
+            game.apply_action(action)
+            if llm_status is not None:
+                self._emit("llm_status", {
+                    "player": snap_player_name, "status": llm_status,
+                })
+            self._broadcast_state()
+        return False
+
+    def _auto_act_for_human(self) -> None:
+        """人类行动超时:自动过牌,不能过则弃牌。"""
+        with self._lock:
+            if self.game is None:
+                return
+            game = self.game
+            if game.phase.value >= 6:
+                return
+            cp = game.players[game.current_player_index]
+            if not cp.is_human:
+                return
+            legal = game.get_legal_actions(cp)
+            if not legal:
+                return
+            auto = (
+                ActionType.CHECK if ActionType.CHECK in legal else ActionType.FOLD
+            )
+            game.apply_action(Action(cp.name, auto))
+            self._emit("action_rejected", {
+                "action": "timeout",
+                "reason": f"行动超时,已自动{'过牌' if auto == ActionType.CHECK else '弃牌'}",
+            })
+            self._broadcast_state()
 
     @staticmethod
     def _is_llm_bot(bot) -> bool:
@@ -414,8 +486,12 @@ class GameManager:
         return None
 
     def _broadcast_state(self) -> None:
-        """广播游戏状态给所有客户端。"""
-        if socketio is None or self.game is None:
+        """广播游戏状态（调用方须持锁）。
+
+        锁内只做轻量快照;蒙特卡洛分析在锁外的后台任务中计算,
+        完成后携带 analysis 再次广播同一状态。
+        """
+        if self._socketio is None or self.game is None:
             return
         human = self._get_human_player()
         # 人类玩家弃牌后，展示所有底牌（旁观模式）
@@ -434,36 +510,60 @@ class GameManager:
             state["to_call"] = self.game.current_bet - human.current_bet
         else:
             state["legal_actions"] = []
-        # 为人类玩家计算战局分析数据（仅当底牌可见时）
-        if human and human.hole_cards and human.hole_cards[0] is not None:
-            # 统计活跃对手（未弃牌、非人类、仍在游戏中）
+
+        # 锁内抓取分析所需的数值快照,锁外计算（避免持锁跑 MC 或竞态读活对象）
+        analysis_args = None
+        if human and human.hole_cards:
             active_opponents = sum(
                 1 for p in self.game.players
-                if not p.is_folded and p.name != human.name and p.status.value < 3
+                if p.is_in_hand and p.name != human.name
             )
-            analysis = self.analyzer.analyze(
-                hole_cards=human.hole_cards,
-                community_cards=list(self.game.community_cards),
-                active_opponent_count=active_opponents,
-                game=self.game,
-                player=human,
+            analysis_args = {
+                "hole_cards": list(human.hole_cards),
+                "community_cards": list(self.game.community_cards),
+                "active_opponent_count": active_opponents,
+                "pot_total": self.game.pot.total,
+                "to_call": max(0, self.game.current_bet - human.current_bet),
+                "player_chips": human.chips,
+                "dead_money": sum(
+                    p.total_bet for p in self.game.players if p.is_folded
+                ),
+                "sunk_cost": human.total_bet,
+            }
+
+        self._emit("game_update", state)
+
+        if analysis_args is not None:
+            self._socketio.start_background_task(
+                self._emit_analysis_update, state, analysis_args,
+                self._game_generation,
             )
-            state["hand_type_probs"] = analysis["hand_type_probs"]
-            state["ranking_distribution"] = analysis["ranking_distribution"]
-            state["odds_ev"] = analysis["odds_ev"]
-            state["pot_financials"] = analysis["pot_financials"]
-            state["sim_count"] = analysis["sim_count"]
-        socketio.emit("game_update", state)
+
+    def _emit_analysis_update(
+        self, state: dict, analysis_args: dict, generation: int,
+    ) -> None:
+        """锁外计算分析并广播带 analysis 的状态（后台任务）。"""
+        analysis = self.analyzer.analyze_snapshot(**analysis_args)
+        if generation != self._game_generation:
+            return  # 游戏已重建，丢弃过期分析
+        state = dict(state)
+        state["analysis"] = analysis
+        # 迁移期兼容:平铺双写（Vue 前端上线后删除,见 docs/protocol.md）
+        for key in ("hand_type_probs", "ranking_distribution", "odds_ev",
+                    "pot_financials", "sim_count"):
+            state[key] = analysis[key]
+        self._emit("game_update", state)
 
     def _emit_action_required(self, player_name: str) -> None:
         """通知客户端需要行动。"""
-        if socketio is None:
-            return
-        socketio.emit("action_required", {"player": player_name})
+        self._emit("action_required", {
+            "player": player_name,
+            "timeout_seconds": HUMAN_ACTION_TIMEOUT,
+        })
 
     def _emit_hand_completed(self) -> None:
         """通知手牌完成，等待用户选择继续或结束。"""
-        if socketio is None or self.game is None:
+        if self.game is None:
             return
         winners = dict(self.game.winners) if self.game.winners else {}
 
@@ -503,7 +603,7 @@ class GameManager:
         with_hand.sort(key=lambda x: x[1], reverse=True)  # score 降序 = 最强在前
         players_data = [d for d, _ in with_hand] + [d for d, _ in without_hand]
 
-        socketio.emit("hand_completed", {
+        self._emit("hand_completed", {
             "hand_id": self.game.hand_id,
             "players": players_data,
             "pot_total": self.game.pot.total,
@@ -511,9 +611,7 @@ class GameManager:
 
     def _emit_game_over(self) -> None:
         """通知游戏结束。"""
-        if socketio is None:
-            return
-        socketio.emit("game_over", {"message": "游戏结束！"})
+        self._emit("game_over", {"message": "游戏结束！"})
 
     def _on_hand_finished(self, history: Any) -> None:
         """牌局结束回调。"""
@@ -582,10 +680,14 @@ class GameManager:
         self._hand_continue_event.set()
 
     def end_game(self) -> None:
-        """用户选择结束游戏。"""
-        self._bot_running = False
-        self._hand_paused = False
-        self._hand_continue_event.set()
+        """用户选择结束游戏:停循环、清游戏状态、通知客户端。"""
+        with self._lock:
+            self._bot_running = False
+            self._hand_paused = False
+            self._hand_continue_event.set()
+            self._bot_wake_event.set()
+            self.game = None
+        self._emit_game_over()
 
     def get_replay_list(self) -> list:
         """返回所有可回放的手牌摘要列表。"""
@@ -631,39 +733,69 @@ class GameManager:
         }
 
     def get_llm_context(self) -> Optional[dict]:
-        """获取最近一次 LLM 调用的完整上下文（供前端调试面板）。
+        """获取所有 LLM Bot 的最近调用上下文（供前端调试面板）。
 
         Returns:
-            包含 system_prompt、user_prompt、raw_response、stats 等的字典，
-            如果没有 LLM Bot 或尚无调用记录则返回 None。
+            {"contexts": {bot 名: 上下文}, **最近一个上下文} 或 None。
         """
-        for bot in self.bots.values():
+        contexts: Dict[str, dict] = {}
+        for name, bot in self.bots.items():
             if self._is_llm_bot(bot):
                 ctx = getattr(bot, 'last_llm_context', None)
                 if ctx:
-                    return ctx
-        return None
+                    contexts[name] = ctx
+        if not contexts:
+            return None
+        latest = list(contexts.values())[-1]
+        return {**latest, "contexts": contexts}
 
     def get_human_player_name(self) -> str:
         return self.human_player_name
 
 
-# 全局单例
-_game_manager = GameManager()
+# ================================================================
+# 会话注册表 —— 当前单会话("default"),未来多桌只需增键
+# ================================================================
+
+class GameSessionRegistry:
+    """会话 ID → GameManager 的注册表。"""
+
+    def __init__(self) -> None:
+        self._sessions: Dict[str, GameManager] = {}
+
+    def get_or_create(self, session_id: str = "default") -> GameManager:
+        """获取或创建指定会话的 GameManager。"""
+        if session_id not in self._sessions:
+            self._sessions[session_id] = GameManager()
+        return self._sessions[session_id]
+
+    def get(self, session_id: str = "default") -> Optional[GameManager]:
+        return self._sessions.get(session_id)
+
+
+registry = GameSessionRegistry()
+_game_manager = registry.get_or_create("default")
 set_game_manager(_game_manager)
 
 
 def register_events(app: Flask) -> None:
     """注册 SocketIO 事件处理器。"""
     global socketio
-    socketio = SocketIO(app, cors_allowed_origins="*")
+    # CORS 白名单:本地开发（Flask :5000 与 Vite :5173）
+    socketio = SocketIO(app, cors_allowed_origins=[
+        "http://127.0.0.1:5000", "http://localhost:5000",
+        "http://127.0.0.1:5173", "http://localhost:5173",
+    ])
+    _game_manager.attach_socketio(socketio)
 
     @socketio.on("connect")
     def handle_connect():
         print("[SocketIO] 客户端已连接")
-        # 发送当前状态
+        # 仅当有进行中的游戏时同步状态（避免 end_game 后推送陈旧状态）
         if _game_manager.game is not None:
-            _game_manager._broadcast_state()
+            with _game_manager._lock:
+                if _game_manager.game is not None:
+                    _game_manager._broadcast_state()
 
     @socketio.on("disconnect")
     def handle_disconnect():
@@ -672,8 +804,9 @@ def register_events(app: Flask) -> None:
     @socketio.on("new_game")
     def handle_new_game(data: dict):
         """创建新游戏。"""
+        data = data or {}
         print(f"[SocketIO] 收到 new_game 请求, player={data.get('player_name', '?')}")
-        _game_manager.create_game(
+        ok, reason = _game_manager.create_game(
             player_name=data.get("player_name", "Player"),
             bot_configs=data.get("bots", [
                 {"style": "COOL", "name": "偏冷"},
@@ -688,25 +821,27 @@ def register_events(app: Flask) -> None:
             ante=data.get("ante", 0),
             betting_structure=data.get("betting_structure", "no_limit"),
         )
+        if not ok:
+            _game_manager._emit("action_rejected", {
+                "action": "new_game", "reason": reason,
+            })
 
     @socketio.on("continue_game")
     def handle_continue_game():
         """用户选择继续游戏。"""
-        print("[SocketIO] 用户选择继续游戏")
         _game_manager.continue_game()
 
     @socketio.on("end_game")
     def handle_end_game():
         """用户选择结束游戏。"""
-        print("[SocketIO] 用户选择结束游戏")
         _game_manager.end_game()
 
     @socketio.on("player_action")
     def handle_player_action(data: dict):
         """处理人类玩家的动作。"""
-        action_name = data.get("action", "").lower()
+        data = data or {}
+        action_name = str(data.get("action", "")).lower()
         amount = data.get("amount", 0)
-        print(f"[SocketIO] 收到玩家动作: {action_name} ${amount}")
 
         action_map = {
             "fold": ActionType.FOLD,
@@ -716,7 +851,15 @@ def register_events(app: Flask) -> None:
             "raise": ActionType.RAISE,
         }
 
-        if action_name in action_map:
-            success = _game_manager.handle_human_action(action_map[action_name], amount)
-            if not success:
-                print(f"[SocketIO] 动作 {action_name} 处理失败（可能不是你的回合或非法动作）")
+        if action_name not in action_map:
+            _game_manager._emit("action_rejected", {
+                "action": action_name, "reason": f"未知动作: {action_name}",
+            })
+            return
+        ok, reason = _game_manager.handle_human_action(
+            action_map[action_name], amount,
+        )
+        if not ok:
+            _game_manager._emit("action_rejected", {
+                "action": action_name, "reason": reason,
+            })
