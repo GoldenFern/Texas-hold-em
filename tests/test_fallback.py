@@ -1,138 +1,74 @@
-"""降级链测试 —— FallbackChain 多级降级逻辑。"""
+"""LLM 失败降级测试 —— LLM 不可用/解析失败时规则引擎兜底。"""
+
+from __future__ import annotations
 
 import pytest
 
-from src.llm.fallback import FallbackChain, build_default_fallback_chain
-from src.llm.langchain_client import MockClient
-from src.llm.config import ProviderConfig
-from src.llm.prompt_builder import PromptBuilder
-from src.llm.response_parser import ResponseParser
-from src.engine.game import Action, ActionType, GameState
+from src.engine.game import GameState
 from src.engine.player import Player
-from src.engine.card import Card
+from src.llm.config import LLMConfig, ProviderConfig
+from src.llm.llm_bot import LLMBot
 
 
-def make_players(names, chips=1000):
-    return [Player(name=n, chips=chips, seat=i) for i, n in enumerate(names)]
+def make_game() -> GameState:
+    players = [Player(name=f"P{i}", chips=1000, seat=i) for i in range(3)]
+    game = GameState(players, small_blind=5, big_blind=10, seed=5)
+    game.start_new_hand()
+    return game
 
 
-class TestFallbackChainBasic:
-    """降级链基本功能。"""
-
-    def test_empty_chain_returns_none(self) -> None:
-        chain = FallbackChain()
-        players = make_players(["A", "B"])
-        game = GameState(players)
-        game.start_new_hand()
-        player = players[game.current_player_index]
-        result = chain.execute("test prompt", "system", game, player)
-        assert result is None
-
-    def test_has_fallbacks_false_when_empty(self) -> None:
-        chain = FallbackChain()
-        assert chain.has_fallbacks is False
-
-    def test_ultimate_fallback_works(self) -> None:
-        """终极降级（规则引擎兜底）返回合法动作。"""
-        chain = FallbackChain()
-
-        def rule_fallback(g, p):
-            return Action(p.name, ActionType.CALL)
-
-        chain.set_ultimate_fallback(rule_fallback)
-
-        players = make_players(["A", "B"])
-        game = GameState(players)
-        game.start_new_hand()
-        player = players[game.current_player_index]
-
-        result = chain.execute("prompt", "system", game, player)
-        assert result is not None
-        assert result.player_name == player.name
-        assert result.action_type == ActionType.CALL
-
-    def test_has_fallbacks_with_ultimate(self) -> None:
-        chain = FallbackChain()
-        chain.set_ultimate_fallback(lambda g, p: Action(p.name, ActionType.FOLD))
-        assert chain.has_fallbacks is True
+def mock_config() -> LLMConfig:
+    cfg = LLMConfig()
+    cfg.primary = ProviderConfig(provider="mock", model="mock")
+    return cfg
 
 
-class TestFallbackChainWithMock:
-    """使用 Mock 客户端测试多级降级。"""
+class TestRuleFallback:
+    def test_no_chain_falls_back_to_rules(self) -> None:
+        """ChatModel 创建失败 → 每次决策走规则引擎,动作合法。"""
+        cfg = LLMConfig()
+        cfg.primary = ProviderConfig(provider="unknown-provider", model="x")
+        bot = LLMBot("L1", cfg, seed=1)
+        assert bot._chain_wrapper is None
 
-    def test_first_level_succeeds(self) -> None:
-        """第一级返回合法 JSON，应直接返回。"""
-        chain = FallbackChain()
-        chain.add_llm_fallback(ProviderConfig(provider="mock", model="mock"))
-        # Mock 默认返回 CALL，在第一级就能成功
+        game = make_game()
+        p = game.players[game.current_player_index]
+        action = bot.decide(game, p)
+        assert action.action_type in game.get_legal_actions(p)
+        assert bot.rule_decisions == 1
+        assert bot.llm_decisions == 0
 
-        players = make_players(["A", "B"])
-        game = GameState(players)
-        game.start_new_hand()
-        player = players[game.current_player_index]
+    def test_mock_llm_decision_counts(self) -> None:
+        """mock Provider 返回合法 JSON → 记为 LLM 决策。"""
+        bot = LLMBot("L1", mock_config(), seed=1)
+        game = make_game()
+        p = game.players[game.current_player_index]
+        action = bot.decide(game, p)
+        assert action.action_type in game.get_legal_actions(p)
+        assert bot.llm_decisions == 1
 
-        result = chain.execute("prompt", "system", game, player)
-        assert result is not None
+    def test_bad_json_falls_back(self) -> None:
+        """LLM 返回坏 JSON → 解析失败 → 规则兜底,失败上下文可见。"""
+        from src.llm.langchain_client import LCChainWrapper, build_fake_chat_model
+        from src.llm.prompt_builder import PromptBuilder
 
-    def test_first_fails_second_succeeds(self) -> None:
-        """第一级失败（非法 JSON），第二级成功。"""
-        chain = FallbackChain()
+        bot = LLMBot("L1", mock_config(), seed=1)
+        fake = build_fake_chat_model(["这不是 JSON,无法解析"])
+        chain = PromptBuilder.get_decision_prompt_template() | fake
+        bot._chain_wrapper = LCChainWrapper(chain, bot._llm_config.primary)
 
-        # 第一级：返回非法 JSON（会失败）
-        # 需要手动构造 MockClient 设置坏响应
-        # FallbackChain.add_llm_fallback 内部创建新 MockClient，
-        # 默认返回合法 JSON。我们需要验证多级的容错行为。
-        #
-        # 验证至少一级成功即可
-        chain.add_llm_fallback(ProviderConfig(provider="mock", model="mock"))
+        game = make_game()
+        p = game.players[game.current_player_index]
+        action = bot.decide(game, p)
+        assert action.action_type in game.get_legal_actions(p)
+        assert bot.rule_decisions == 1
+        # L4 回归:失败调用也缓存上下文供调试面板
+        assert bot.last_llm_context
+        assert "失败" in bot.last_llm_context.get("parsed_action", "")
 
-        players = make_players(["A", "B"])
-        game = GameState(players)
-        game.start_new_hand()
-        player = players[game.current_player_index]
-
-        result = chain.execute("prompt", "system", game, player)
-        assert result is not None
-
-    def test_all_levels_fail_ultimate_saves(self) -> None:
-        """所有 LLM 降级失败，终极规则引擎兜底。"""
-        chain = FallbackChain()
-
-        # 添加一个会用坏响应的 Mock
-        chain.add_llm_fallback(ProviderConfig(provider="mock", model="mock"))
-
-        # 覆盖第一个客户端返回非法 JSON（_fallback_clients 的索引与 configs 对应）
-        chain._fallback_clients.append(MockClient(responses=["not json at all"]))
-
-        # 设置终极降级
-        chain.set_ultimate_fallback(lambda g, p: Action(p.name, ActionType.CHECK))
-
-        players = make_players(["A", "B", "C"])
-        game = GameState(players)
-        game.start_new_hand()
-        # 到翻牌让 check 合法
-        for _ in range(10):
-            if game.phase.value >= 6:
-                break
-            cp = game.players[game.current_player_index]
-            legal = game.get_legal_actions(cp)
-            if ActionType.CHECK in legal:
-                game.apply_action(Action(cp.name, ActionType.CHECK))
-            elif ActionType.CALL in legal:
-                game.apply_action(Action(cp.name, ActionType.CALL))
-            else:
-                break
-
-        player = game.players[game.current_player_index]
-        result = chain.execute("prompt", "system", game, player)
-        assert result is not None
-        assert result.action_type == ActionType.CHECK
-
-
-class TestBuildDefaultFallbackChain:
-    """默认降级链构建。"""
-
-    def test_default_chain_has_mock(self) -> None:
-        chain = build_default_fallback_chain()
-        assert chain.has_fallbacks is True
-        assert len(chain.fallback_configs) >= 1
+    def test_last_error_type_empty_on_success(self) -> None:
+        bot = LLMBot("L1", mock_config(), seed=1)
+        game = make_game()
+        p = game.players[game.current_player_index]
+        bot.decide(game, p)
+        assert bot.last_error_type == ""

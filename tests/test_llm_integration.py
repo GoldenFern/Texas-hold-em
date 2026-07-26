@@ -206,7 +206,6 @@ class TestLLMBotWithMock:
         llm_config = LLMConfig()
         llm_config.primary = ProviderConfig(provider="mock", model="mock")
         # 清空降级链，仅用规则引擎兜底
-        llm_config.fallbacks = []
 
         bot = LLMBot("TestLLM", llm_config, seed=42)
         assert "TestLLM" in str(bot)
@@ -228,7 +227,6 @@ class TestLLMBotWithMock:
         """验证 LLM 失败时降级到规则引擎。"""
         llm_config = LLMConfig()
         llm_config.primary = ProviderConfig(provider="mock", model="mock")
-        llm_config.fallbacks = []
 
         bot = LLMBot("TestLLM", llm_config, seed=42)
         # 用返回非法 JSON 的 chain 替换（模拟 LLM 解析失败 → 触发降级）

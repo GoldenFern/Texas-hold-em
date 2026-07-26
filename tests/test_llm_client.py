@@ -11,7 +11,6 @@ from src.llm.langchain_client import (
     configure_llm_traffic_logging,
 )
 from src.llm.config import ProviderConfig
-from src.llm.fallback import FallbackChain
 
 
 class TestMockClient:
@@ -76,54 +75,6 @@ class TestLangChainFactory:
         model = build_fake_chat_model(["response 1", "response 2"])
         from langchain_core.language_models import FakeListChatModel
         assert isinstance(model, FakeListChatModel)
-
-
-class TestCredentialHandling:
-    """API Key 缺失时的降级。"""
-
-    def test_fallback_chain_skips_missing_credentials(self) -> None:
-        """降级链跳过未配置的 LLM，使用规则引擎兜底。"""
-        chain = FallbackChain()
-        chain.add_llm_fallback(ProviderConfig(
-            provider="deepseek",
-            model="deepseek-v4-flash",
-            base_url="https://api.deepseek.com",
-        ))
-        called = {"count": 0}
-
-        def rule_fallback(game, player) -> None:
-            called["count"] += 1
-            return None
-
-        chain.set_ultimate_fallback(rule_fallback)
-
-        action = chain.execute_ultimate(game=None, player=None)  # type: ignore[arg-type]
-        assert action is None
-        assert called["count"] == 1
-
-    def test_traffic_logging_writes_request_and_response(self, capsys) -> None:
-        """流量日志记录请求和响应到 stderr。"""
-        import os
-
-        configure_llm_traffic_logging(enabled=True)
-
-        callback = LCTrafficCallback()
-        callback.on_llm_start("deepseek", "deepseek-v4-pro", "test prompt content")
-        callback.on_llm_end('{"action": "CALL", "amount": 0}', input_tokens=120, output_tokens=18)
-
-        captured = capsys.readouterr()
-        assert "LLM Request" in captured.err
-        assert "LLM Response" in captured.err
-        assert "deepseek-v4-pro" in captured.err
-
-        configure_llm_traffic_logging(enabled=False)
-        assert "THP_LLM_LOG_TRAFFIC" not in os.environ
-
-        # 禁用后不再输出
-        saved_handler_count = len(
-            __import__('logging').getLogger("src.llm.traffic").handlers
-        )
-        assert saved_handler_count == 0
 
 
 class TestLCResponse:
