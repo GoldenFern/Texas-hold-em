@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import math
+import re
+import traceback
+import zlib
 from threading import Event, Lock
 from typing import Any, Dict, List, Optional
 
@@ -57,10 +61,10 @@ class GameManager:
             self._socketio.emit(event, payload if payload is not None else {})
 
     def _wait_event(self, event: Event, timeout: Optional[float] = None) -> bool:
-        """协程安全地等待 Event。
+        """后台线程安全地等待 Event。
 
-        eventlet green thread 中不可用阻塞式 Event.wait（会卡死事件循环），
-        以 socketio.sleep(0.1) 粒度轮询。
+        以 socketio.sleep(0.1) 粒度轮询,兼容任意 async_mode
+        (阻塞式 Event.wait 会长期占用线程且无法响应循环终止)。
 
         Returns:
             True 表示事件已置位；False 表示超时或循环被终止。
@@ -80,10 +84,26 @@ class GameManager:
     @staticmethod
     def _sanitize_name(name: str, max_len: int = 20) -> str:
         """清理玩家名称：限制长度、剔除 HTML 标签。"""
-        import re
         name = re.sub(r'<[^>]*>', '', name)  # 移除 HTML 标签
         name = name.strip()[:max_len]  # 限制长度
         return name if name else "Player"
+
+    @staticmethod
+    def _coerce_int(value: Any, label: str) -> int:
+        """把客户端传入的数值参数严格转换为 int。
+
+        拒绝 bool/字符串/NaN/非整数浮点，防止 TypeError 静默崩溃
+        或 NaN 比较导致的不可预期钳位。
+
+        Raises:
+            ValueError: 值不是有限整数时。
+        """
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError(f"{label} 必须是数字,收到: {value!r}")
+        fval = float(value)
+        if not math.isfinite(fval) or not fval.is_integer():
+            raise ValueError(f"{label} 必须是整数,收到: {value!r}")
+        return int(fval)
 
     def create_game(
         self,
@@ -97,106 +117,143 @@ class GameManager:
     ) -> tuple:
         """创建新游戏。
 
+        全部参数先校验、后变更状态；构建中途失败会回滚到
+        无游戏的一致状态（旧循环已终止,不可复活旧局）。
+
         Returns:
             (成功与否, 失败原因)。
         """
+        # ---- 阶段 1: 参数校验与名称清理（未触碰任何可变状态） ----
+        bs_map = {
+            "no_limit": BettingStructure.NO_LIMIT,
+            "pot_limit": BettingStructure.POT_LIMIT,
+            "fixed_limit": BettingStructure.FIXED_LIMIT,
+        }
+        if betting_structure not in bs_map:
+            return False, f"无效的下注结构: {betting_structure}"
+
+        try:
+            starting_chips = self._coerce_int(starting_chips, "初始筹码")
+            small_blind = self._coerce_int(small_blind, "小盲注")
+            big_blind = self._coerce_int(big_blind, "大盲注")
+            ante = self._coerce_int(ante, "前注")
+        except ValueError as e:
+            return False, str(e)
+        if starting_chips <= 0 or small_blind <= 0 or big_blind <= 0 or ante < 0:
+            return False, "筹码与盲注必须为正数,前注不能为负"
+        if big_blind < small_blind:
+            return False, "大盲注不能小于小盲注"
+
+        if not isinstance(bot_configs, list):
+            return False, "机器人配置必须是列表"
+        if len(bot_configs) > 8:
+            return False, "机器人数量最多 8 个(含人类共 9 人)"
+
+        player_name = self._sanitize_name(str(player_name))
+        sanitized_bots: List[tuple] = []
+        seen_names = {player_name}
+        for i, cfg in enumerate(bot_configs):
+            if not isinstance(cfg, dict):
+                return False, f"机器人配置 #{i + 1} 格式错误"
+            style_name = cfg.get("style", "BALANCED")
+            try:
+                style = BotStyle(style_name)
+            except ValueError:
+                return False, f"无效的机器人风格: {style_name}"
+            # Bot 名与人类名同样清理（XSS 源头之一）
+            bot_name = self._sanitize_name(str(cfg.get("name", f"Bot{i+1}")))
+            if bot_name in seen_names:
+                return False, f"玩家名称重复: {bot_name}"
+            seen_names.add(bot_name)
+            sanitized_bots.append((bot_name, style, cfg))
+
         with self._lock:
-            # 停止旧的 Bot 循环并递增代际
+            # ---- 阶段 2: 终止旧循环并递增代际（此后旧局不可恢复） ----
             self._bot_running = False
             self._bot_wake_event.set()
-            self._game_generation += 1  # 递增代际，旧循环检测后自动退出
-            current_gen = self._game_generation
+            self._hand_continue_event.set()
+            self._game_generation += 1
 
-            # 清理玩家名称（防 XSS）
-            player_name = self._sanitize_name(player_name)
+            # ---- 阶段 3: 构建新游戏；失败则回滚到无游戏的一致状态 ----
+            try:
+                players = [Player(
+                    name=player_name, chips=starting_chips, seat=0, is_human=True,
+                )]
+                bots_new: Dict[str, Any] = {}
+                for i, (bot_name, style, cfg) in enumerate(sanitized_bots):
+                    seed = zlib.crc32(bot_name.encode("utf-8")) % 10000
 
-            self.human_player_name = player_name
-            self.bots.clear()
+                    # LLM 机器人特殊处理
+                    if style == BotStyle.LLM or cfg.get("llm_config"):
+                        llm_cfg = cfg.get("llm_config", {})
+                        from src.llm.config import LLMConfig, load_config
+                        try:
+                            llm_config = load_config()
+                        except Exception:
+                            llm_config = LLMConfig()
+                        if llm_cfg.get("provider"):
+                            llm_config.primary.provider = llm_cfg["provider"]
+                        if llm_cfg.get("model"):
+                            llm_config.primary.model = llm_cfg["model"]
+                        bot = BotFactory.create_llm(
+                            name=bot_name,
+                            provider=llm_config.primary.provider,
+                            model=llm_config.primary.model,
+                            seed=seed,
+                        )
+                        # 注入 ContextManager 的 reporter 引用
+                        bot.context_manager._sync_opponent_stats(self.reporter)
+                    else:
+                        bot = BotFactory.create(
+                            style, name=bot_name, seed=seed,
+                            temperature=cfg.get("temperature"),
+                        )
+                    bots_new[bot_name] = bot
+                    players.append(Player(
+                        name=bot_name, chips=starting_chips, seat=i + 1,
+                    ))
 
-            # 创建玩家列表
-            players = []
-            # 人类玩家（座位 0）
-            players.append(Player(
-                name=player_name, chips=starting_chips, seat=0, is_human=True,
-            ))
+                # 注入共享对手模型（基于 reporter 统计的逐对手 F_max/λ 估计）
+                from src.ai.opponent_model import OpponentModel
+                opponent_model = OpponentModel(self.reporter)
+                for bot in bots_new.values():
+                    bot.set_opponent_model(opponent_model)
 
-            # 机器人玩家
-            for i, cfg in enumerate(bot_configs):
-                style_name = cfg.get("style", "BALANCED")
-                # Bot 名与人类名同样清理（XSS 源头之一）
-                bot_name = self._sanitize_name(cfg.get("name", f"Bot{i+1}"))
-                try:
-                    style = BotStyle(style_name)
-                except ValueError:
-                    return False, f"无效的机器人风格: {style_name}"
+                game = GameState(
+                    players=players,
+                    small_blind=small_blind,
+                    big_blind=big_blind,
+                    ante=ante,
+                    betting_structure=bs_map[betting_structure],
+                )
+                game.on("hand_finished", self._on_hand_finished)
+                game.start_new_hand()
 
-                # LLM 机器人特殊处理
-                if style == BotStyle.LLM or cfg.get("llm_config"):
-                    llm_cfg = cfg.get("llm_config", {})
-                    from src.llm.config import LLMConfig, ProviderConfig, load_config
-                    try:
-                        llm_config = load_config()
-                    except Exception:
-                        llm_config = LLMConfig()
-                    if llm_cfg.get("provider"):
-                        llm_config.primary.provider = llm_cfg["provider"]
-                    if llm_cfg.get("model"):
-                        llm_config.primary.model = llm_cfg["model"]
-                    import zlib
-                    bot = BotFactory.create_llm(
-                        name=bot_name,
-                        provider=llm_config.primary.provider,
-                        model=llm_config.primary.model,
-                        seed=zlib.crc32(bot_name.encode()) % 10000,
-                    )
-                    # 注入 ContextManager 的 reporter 引用
-                    bot.context_manager._sync_opponent_stats(self.reporter)
-                else:
-                    import zlib
-                    t = cfg.get("temperature")
-                    bot = BotFactory.create(style, name=bot_name,
-                                            seed=zlib.crc32(bot_name.encode()) % 10000,
-                                            temperature=t)
-                self.bots[bot_name] = bot
-                players.append(Player(
-                    name=bot_name, chips=starting_chips, seat=i + 1,
-                ))
+                # 全部构建成功才提交新状态
+                self.bots = bots_new
+                self.human_player_name = player_name
+                self.game = game
+                # 新对局不继承旧回放（hand_id 重新从 1 计数）
+                self._replay_history = []
+            except Exception as e:  # noqa: BLE001 —— 构建失败必须上报而非撕裂
+                traceback.print_exc()
+                self.bots = {}
+                self.game = None
+                self.human_player_name = ""
+                self._emit("game_error", {"message": f"创建游戏失败: {e}"})
+                return False, f"创建游戏失败: {e}"
 
-            # 注入共享对手模型（基于 reporter 统计的逐对手 F_max/λ 估计）
-            from src.ai.opponent_model import OpponentModel
-            opponent_model = OpponentModel(self.reporter)
-            for bot in self.bots.values():
-                bot.set_opponent_model(opponent_model)
-
-            bs_map = {
-                "no_limit": BettingStructure.NO_LIMIT,
-                "pot_limit": BettingStructure.POT_LIMIT,
-                "fixed_limit": BettingStructure.FIXED_LIMIT,
-            }
-
-            self.game = GameState(
-                players=players,
-                small_blind=small_blind,
-                big_blind=big_blind,
-                ante=ante,
-                betting_structure=bs_map.get(betting_structure, BettingStructure.NO_LIMIT),
-            )
-
-            # 注册事件回调
-            self.game.on("hand_finished", self._on_hand_finished)
-
-            # 开始第一手牌
-            self.game.start_new_hand()
-
-            # 广播初始状态
+            # 广播初始状态并启动 Bot 循环（作为 SocketIO 后台线程）
             self._broadcast_state()
-
-            # 启动 Bot 循环（作为 SocketIO 后台 green thread）
             self._start_bot_loop()
         return True, ""
 
-    def handle_human_action(self, action_type: ActionType, amount: int = 0) -> tuple:
+    def handle_human_action(self, action_type: ActionType, amount: Any = 0) -> tuple:
         """处理人类玩家的动作。
+
+        Args:
+            amount: 下注/加注金额。仅接受有限数字（bool 视为非法），
+                非法输入直接拒绝并回报原因，绝不让异常静默丢失。
 
         Returns:
             (成功与否, 失败原因)。失败原因用于 action_rejected 事件。
@@ -216,8 +273,12 @@ class GameManager:
                 legal_names = [a.name for a in legal]
                 return False, f"非法动作 {action_type.name}（合法: {legal_names}）"
 
-            # 构造金额
+            # 构造金额（BET/RAISE 先做严格类型校验再钳位）
             if action_type in (ActionType.BET, ActionType.RAISE):
+                try:
+                    amount = self._coerce_int(amount, "下注金额")
+                except ValueError as e:
+                    return False, str(e)
                 min_raise = game.get_min_raise_amount(player)
                 max_bet = game.get_max_bet(player)
                 amount = max(min_raise, min(amount, max_bet))
@@ -247,7 +308,7 @@ class GameManager:
         self._socketio.start_background_task(self._bot_loop)
 
     def _bot_loop(self) -> None:
-        """Bot 主循环 —— 运行在 Eventlet green thread 中。
+        """Bot 主循环 —— 运行在 SocketIO 后台线程中(async_mode=threading)。
 
         任何未捕获异常都会以 game_error 事件上报并保持循环存活,
         避免静默冻结整局游戏。
@@ -279,6 +340,7 @@ class GameManager:
 
         # 阶段 1: 判断当前局面（锁内快照）
         need_wait_human = False
+        wait_generation = self._game_generation  # 等待侧代际快照(防跨局误伤)
         with self._lock:
             if self.game is None:
                 return True
@@ -294,7 +356,7 @@ class GameManager:
         if need_wait_human:
             acted = self._wait_event(self._bot_wake_event, HUMAN_ACTION_TIMEOUT)
             if not acted and self._bot_running:
-                self._auto_act_for_human()
+                self._auto_act_for_human(wait_generation)
             return False
 
         # 阶段 3: 手牌结束处理
@@ -408,9 +470,16 @@ class GameManager:
             self._broadcast_state()
         return False
 
-    def _auto_act_for_human(self) -> None:
-        """人类行动超时:自动过牌,不能过则弃牌。"""
+    def _auto_act_for_human(self, generation: Optional[int] = None) -> None:
+        """人类行动超时:自动过牌,不能过则弃牌。
+
+        Args:
+            generation: 发起等待时的代际快照。若已开新局（代际不匹配），
+                旧循环的超时动作必须作废，否则会误伤新游戏的行动。
+        """
         with self._lock:
+            if generation is not None and generation != self._game_generation:
+                return  # 已开新局,本次超时作废
             if self.game is None:
                 return
             game = self.game
@@ -787,8 +856,11 @@ set_game_manager(_game_manager)
 def register_events(app: Flask) -> None:
     """注册 SocketIO 事件处理器。"""
     global socketio
+    # 显式固定 threading 模式：代码使用原生 threading.Lock/Event,
+    # 与真实线程语义一致。eventlet 已弃用,且未 monkey_patch 时
+    # green thread + 原生锁会冻结整个事件循环。
     # CORS 白名单:本地开发（Flask :5000 与 Vite :5173）
-    socketio = SocketIO(app, cors_allowed_origins=[
+    socketio = SocketIO(app, async_mode="threading", cors_allowed_origins=[
         "http://127.0.0.1:5000", "http://localhost:5000",
         "http://127.0.0.1:5173", "http://localhost:5173",
     ])
@@ -809,24 +881,28 @@ def register_events(app: Flask) -> None:
 
     @socketio.on("new_game")
     def handle_new_game(data: dict):
-        """创建新游戏。"""
-        data = data or {}
+        """创建新游戏。任何异常都回报客户端,严禁静默吞。"""
+        data = data if isinstance(data, dict) else {}
         print(f"[SocketIO] 收到 new_game 请求, player={data.get('player_name', '?')}")
-        ok, reason = _game_manager.create_game(
-            player_name=data.get("player_name", "Player"),
-            bot_configs=data.get("bots", [
-                {"style": "COOL", "name": "偏冷"},
-                {"style": "WARM", "name": "偏热"},
-                {"style": "COLD", "name": "极冷"},
-                {"style": "HOT", "name": "炎热"},
-                {"style": "CHAOS", "name": "混沌"},
-            ]),
-            starting_chips=data.get("starting_chips", 1000),
-            small_blind=data.get("small_blind", 5),
-            big_blind=data.get("big_blind", 10),
-            ante=data.get("ante", 0),
-            betting_structure=data.get("betting_structure", "no_limit"),
-        )
+        try:
+            ok, reason = _game_manager.create_game(
+                player_name=data.get("player_name", "Player"),
+                bot_configs=data.get("bots", [
+                    {"style": "COOL", "name": "偏冷"},
+                    {"style": "WARM", "name": "偏热"},
+                    {"style": "COLD", "name": "极冷"},
+                    {"style": "HOT", "name": "炎热"},
+                    {"style": "CHAOS", "name": "混沌"},
+                ]),
+                starting_chips=data.get("starting_chips", 1000),
+                small_blind=data.get("small_blind", 5),
+                big_blind=data.get("big_blind", 10),
+                ante=data.get("ante", 0),
+                betting_structure=data.get("betting_structure", "no_limit"),
+            )
+        except Exception as e:  # noqa: BLE001 —— 入口级兜底
+            traceback.print_exc()
+            ok, reason = False, f"创建游戏失败: {e}"
         if not ok:
             _game_manager._emit("action_rejected", {
                 "action": "new_game", "reason": reason,
@@ -844,8 +920,8 @@ def register_events(app: Flask) -> None:
 
     @socketio.on("player_action")
     def handle_player_action(data: dict):
-        """处理人类玩家的动作。"""
-        data = data or {}
+        """处理人类玩家的动作。任何异常都回报客户端,严禁静默吞。"""
+        data = data if isinstance(data, dict) else {}
         action_name = str(data.get("action", "")).lower()
         amount = data.get("amount", 0)
 
@@ -862,9 +938,13 @@ def register_events(app: Flask) -> None:
                 "action": action_name, "reason": f"未知动作: {action_name}",
             })
             return
-        ok, reason = _game_manager.handle_human_action(
-            action_map[action_name], amount,
-        )
+        try:
+            ok, reason = _game_manager.handle_human_action(
+                action_map[action_name], amount,
+            )
+        except Exception as e:  # noqa: BLE001 —— 入口级兜底(畸形输入/引擎异常)
+            traceback.print_exc()
+            ok, reason = False, f"服务器内部错误: {e}"
         if not ok:
             _game_manager._emit("action_rejected", {
                 "action": action_name, "reason": reason,

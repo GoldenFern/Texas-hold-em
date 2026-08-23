@@ -79,6 +79,58 @@ class TestEvBet:
         assert x_nuts >= x_marginal
 
 
+class TestEvRaiseWithToCall:
+    """面对下注加注时,EV 必须计入 to_call（Hero 补齐 + 对手匹配）。"""
+
+    def test_manual_formula_with_to_call(self) -> None:
+        """x_eff = x + c 代入后与手工公式逐项一致。"""
+        bot = make_bot()
+        x, pot, w, c = 5.0, 10.0, 0.6, 4.0
+        fm, lam = 0.68, 1.8
+        x_eff = x + c
+        z = x_eff / pot
+        F = fm * (1.0 - math.exp(-lam * z))
+        q_inf = max(0.05, w - bot.profile.q_delta)
+        q = q_inf + (w - q_inf) * math.exp(-bot.profile.nu * z)
+        expected = F * pot + (1 - F) * (q * (pot + 2 * x_eff) - x_eff)
+        assert bot._ev_bet(x, pot, w, [fm], [lam], to_call=c) == pytest.approx(expected)
+
+    def test_to_call_penalizes_raise_when_behind(self) -> None:
+        """落后方面对下注加注:E(V) 因补齐投入被压低(修正旧模型的系统性高估)。
+
+        用全下对手(F_max=0)隔离出被跟注分支:q < 0.5 时,
+        补齐 to_call 后的期望必然严格低于旧的无对峙模型。
+        """
+        bot = make_bot()
+        args = (5.0, 10.0, 0.35, [0.0], [1.8])
+        ev_pure_model = bot._ev_bet(*args)
+        ev_facing = bot._ev_bet(*args, to_call=4.0)
+        assert ev_facing < ev_pure_model
+
+    def test_all_fold_branch_ignores_to_call(self) -> None:
+        """未被跟注的加注不投入 x_eff（溢出返还）,EV 仍为底池。"""
+        bot = make_bot()
+        assert bot._ev_bet(5.0, 10.0, 0.9, [], [], to_call=4.0) == 10.0
+
+    def test_zero_to_call_matches_pure_bet_model(self) -> None:
+        """BET 路径(c=0)行为与旧模型完全一致(回归安全)。"""
+        bot = make_bot()
+        args = (5.0, 10.0, 0.6, [0.68], [1.8])
+        assert bot._ev_bet(*args) == pytest.approx(bot._ev_bet(*args, to_call=0.0))
+
+
+class TestFactoryTemperatureOverride:
+    def test_custom_temperature_preserves_style_params(self) -> None:
+        """自定义温度只覆盖温度,不得丢弃风格的对手响应参数。"""
+        base = BOT_PROFILES[BotStyle.HOT]
+        bot = BotFactory.create(BotStyle.HOT, temperature=0.11)
+        assert bot.temperature == 0.11
+        assert bot.profile.F_max == base.F_max
+        assert bot.profile.lambda_fold == base.lambda_fold
+        assert bot.profile.nu == base.nu
+        assert bot.profile.q_delta == base.q_delta
+
+
 class TestSamplingSafety:
     def test_zero_pot_no_crash(self) -> None:
         """pot=0 时温度下限 1BB 防除零。"""

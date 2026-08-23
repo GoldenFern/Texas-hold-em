@@ -1,5 +1,15 @@
-"""10,000局仿真：零和利润，每轮座次随机化，使用优化后的 bet sizing。"""
-import sys, random, time
+"""守恒/零和门禁仿真：零和利润，每轮座次随机化。
+
+作为 CI 门禁使用：任一手出现非零和偏差或免费弃牌即以退出码 1 失败。
+用法:
+    python scripts/sim_10000hands.py               # 完整万手门禁
+    python scripts/sim_10000hands.py --hands 2000  # CI 快速档
+"""
+import argparse
+import random
+import sys
+import time
+
 sys.path.insert(0, ".")
 
 from collections import Counter
@@ -18,7 +28,11 @@ PROFILES = [
     BOT_PROFILES[BotStyle.CHAOS],
 ]
 STARTING_CHIPS = 10000  # 更多筹码，减少 bust-out
-N = 10000
+
+_parser = argparse.ArgumentParser(description="守恒/零和门禁仿真")
+_parser.add_argument("--hands", type=int, default=10000, help="仿真手牌数")
+ARGS = _parser.parse_args()
+N = ARGS.hands
 
 rng = random.Random(SEED)
 all_decisions = []
@@ -99,7 +113,7 @@ elapsed = time.perf_counter() - t0
 # 报告
 # ================================================================
 print(f"\n{'='*90}")
-print(f"10,000-HAND SIMULATION")
+print(f"{N:,d}-HAND SIMULATION")
 print(f"Starting: ${STARTING_CHIPS}  |  No rebuy  |  Strategy: separated k=0.6 kbl=0.65 cap=0.75")
 print(f"Total time: {elapsed:.0f}s ({elapsed/60:.1f} min)")
 print(f"{'='*90}")
@@ -197,3 +211,9 @@ print(f"\nFree-Check-Folds: {len(bad)}  {'OK' if len(bad)==0 else 'BUG!'}")
 max_zs = max(zero_sum_checks) if zero_sum_checks else -1
 print(f"Max zero-sum deviation: ${max_zs}  {'OK' if max_zs < 5 else 'ISSUE'}")
 print(f"\nDone. Total: {elapsed:.0f}s ({elapsed/60:.1f} min)")
+
+# ---- 门禁退出码（CI 用）:非零和或免费弃牌即失败 ----
+gate_pass = (max_zs < 5) and (len(bad) == 0)
+print(f"Gate: {'PASS' if gate_pass else 'FAIL'} "
+      f"(zero_sum_dev={max_zs}, free_check_folds={len(bad)})")
+sys.exit(0 if gate_pass else 1)

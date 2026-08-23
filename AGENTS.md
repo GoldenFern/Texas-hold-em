@@ -17,7 +17,7 @@ cd frontend && npm run dev        # 前端开发热更新(:5173 代理到 :5000)
 cd frontend && npm run build      # 前端构建到 static/dist(生产)
 python main.py --cli --hands 25   # CLI 模式(6 个 AI Bot 自动对战)
 python -m pytest tests/ -q --ignore=tests/test_llm_live.py   # 全部单测
-python scripts/sim_10000hands.py  # 万手守恒/零和门禁
+python scripts/sim_10000hands.py  # 万手守恒/零和门禁(失败退出码 1;--hands N 可减量)
 python scripts/build_preflop_table.py   # 重新生成翻前多人胜率表
 ```
 
@@ -52,8 +52,11 @@ python scripts/build_preflop_table.py   # 重新生成翻前多人胜率表
 - 新增 Bot 类型(如 RLCard):在 `BotFactory` 注册风格,`GameManager.create_game` 分支创建;非法动作会被 `game_error` 上报后降级,合法性以 `get_legal_actions` 为准
 
 ### GameManager 并发模型
-- eventlet green thread bot 循环;Event 等待用 `_wait_event`(socketio.sleep 0.1s 轮询,禁用阻塞式 wait)
-- LLM 决策在锁外执行,回锁后按 generation/hand_id/player 三重校验
+- SocketIO 显式 `async_mode="threading"`(eventlet 已弃用并从依赖移除;未 monkey_patch 时 green thread + 原生锁会冻结事件循环),bot 循环跑在后台线程,原生 `threading.Lock/Event` 语义正确
+- Event 等待用 `_wait_event`(socketio.sleep 0.1s 轮询,禁用阻塞式 wait)
+- LLM 决策在锁外执行,回锁后按 generation/hand_id/player 三重校验;人类等待侧超时自动行动同样带 generation 快照守卫(`_auto_act_for_human(gen)`)
+- `create_game` 三段式:参数校验(含数值类型/风格/重名)→ 终止旧循环递增代际 → 构建失败回滚到无游戏一致状态并上报 `game_error`
+- 所有 SocketIO 入口对客户端数据做严格校验(金额仅接受有限数字,拒绝 bool/NaN/字符串),任何入口异常必须回报 `action_rejected`/`game_error`,严禁静默吞
 - `_broadcast_state` 锁内只做快照;MC 分析在后台任务用数值快照计算(`BattleAnalyzer.analyze_snapshot`)
 - 循环级异常 → `game_error` 事件 + 循环存活,严禁静默吞
 

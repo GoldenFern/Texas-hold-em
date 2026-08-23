@@ -83,8 +83,12 @@ class TestCreateChatModel:
         with pytest.raises(ValueError):
             create_chat_model(ProviderConfig(provider="nope", model="x"))
 
-    def test_openai_compatible_gets_max_tokens_and_retries(self) -> None:
+    def test_openai_compatible_gets_max_tokens_and_retries(self, monkeypatch) -> None:
         """L1/L9 回归: max_tokens 采用可配置默认(4096),重试传入模型。"""
+        # 屏蔽宿主机的系统级代理(httpx 不支持 socks4 等协议会直接抛错);
+        # getproxies 优先读环境变量,NO_PROXY=* 可绕过 Windows 注册表代理
+        monkeypatch.setenv("NO_PROXY", "*")
+        monkeypatch.setenv("no_proxy", "*")
         from src.llm.langchain_client import create_chat_model
         cfg = ProviderConfig(provider="deepseek", model="deepseek-chat",
                              api_key="k")

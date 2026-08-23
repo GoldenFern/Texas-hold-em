@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: 后端测试 + 守恒门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 单元测试
+        # 实机 LLM 测试(test_llm_live.py)仅在本地显式提供 API Key 时运行
+        run: python -m pytest tests/ -q --ignore=tests/test_llm_live.py
+
+      - name: 万手守恒/零和门禁(非零退出码即失败)
+        run: python scripts/sim_10000hands.py
+
+  frontend:
+    name: 前端类型检查 + 构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 类型检查 + 构建(vue-tsc 门禁)
+        run: npm run build

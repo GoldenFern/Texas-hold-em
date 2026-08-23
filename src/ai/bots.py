@@ -18,7 +18,7 @@ import json
 import math
 import os
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -268,18 +268,20 @@ class BoltzmannBot:
         )
         if bet_action is not None:
             # 确定最小/最大合法下注增量（BB 单位）
-            # _ev_bet 公式期望 x = 本轮新增投入（增量），非总下注额
+            # _ev_bet 公式期望 x = 相对当前下注的增量;面对下注时的
+            # to_call 在 _ev_bet 内部以 x_eff = x + to_call 计入
             player_chips_bb = player.chips / bb
             if bet_action == ActionType.BET:
                 min_r = game_state.big_blind / bb  # 主动下注 = BB
             else:
-                # RAISE: 增量为 max(min_raise, last_raise)，不含 to_call
+                # RAISE: 增量下限为 max(min_raise, last_raise)
                 min_r = max(game_state.min_raise, game_state.last_raise) / bb
             max_bet_increment = player_chips_bb
 
             if min_r <= max_bet_increment:
                 x_opt, ev_opt = self._find_optimal_bet(
                     pot, win_rate, fold_maxes, lams, min_r, max_bet_increment,
+                    to_call=to_call,
                 )
                 action_evs[bet_action] = ev_opt
                 bet_sizes[bet_action] = x_opt
@@ -323,21 +325,29 @@ class BoltzmannBot:
         win_rate: float,
         fold_maxes: Sequence[float],
         lams: Sequence[float],
+        to_call: float = 0.0,
     ) -> float:
-        """下注 x BB 的期望收益（逐对手响应模型）。
+        """下注/加注的期望收益（逐对手响应模型）。
 
-        F_i(x) = F_max_i · (1 − e^(−λ_i·z)),  z = x/pot
-        q(x)  = q_inf + (w − q_inf) · e^(−ν·z)
-        all_fold = Π F_i
+        F_i(x_eff) = F_max_i · (1 − e^(−λ_i·z)),  z = x_eff/pot
+        q(x_eff)   = q_inf + (w − q_inf) · e^(−ν·z)
+        all_fold   = Π F_i
         E[k | k≥1] = Σ(1−F_i) / (1 − Π F_i)   (条件期望的精确式)
-        EV = all_fold·P + (1−all_fold)·[q·(P + (1+k)·x) − x]
+        EV(x | c)  = all_fold·P + (1−all_fold)·[q·(P + (1+k)·x_eff) − x_eff]
+
+        其中有效投入 x_eff = x + c（c = 行动前还需跟注额）：
+        加注者须先补齐跟注再加注，每个跟注者也须先补齐再匹配加注，
+        因此弃牌压力与被跟注分支都以 x_eff 度量。BET 路径 c=0,
+        公式退化为纯下注模型。全弃牌分支不投入 x_eff（未获匹配的
+        加注部分返还），EV 仍为 P。
 
         Args:
-            x: 本轮新增投入（BB）。
+            x: 相对当前下注的新增增量（BB）。
             pot: 当前底池（BB）。
             win_rate: 当前 equity share。
             fold_maxes: 各对手的 F_max（全下者为 0）。
             lams: 各对手的 λ。
+            to_call: 需补齐的跟注额 c（BB），主动下注时为 0。
 
         Returns:
             期望收益（BB）。
@@ -348,7 +358,8 @@ class BoltzmannBot:
         if x <= 0 or pot <= 0:
             return win_rate * pot
 
-        z = x / pot
+        x_eff = x + max(0.0, to_call)
+        z = x_eff / pot
         fold_probs = [
             max(0.0, min(fm, fm * (1.0 - math.exp(-lam * z))))
             for fm, lam in zip(fold_maxes, lams)
@@ -367,7 +378,7 @@ class BoltzmannBot:
         if all_fold >= 1.0 - 1e-12:
             return pot
         exp_callers_given_call = expected_callers / (1.0 - all_fold)
-        ev_called = q * (pot + (1.0 + exp_callers_given_call) * x) - x
+        ev_called = q * (pot + (1.0 + exp_callers_given_call) * x_eff) - x_eff
         return all_fold * pot + (1.0 - all_fold) * ev_called
 
     def _find_optimal_bet(
@@ -378,13 +389,16 @@ class BoltzmannBot:
         lams: Sequence[float],
         min_bet: float,
         max_bet: float,
+        to_call: float = 0.0,
     ) -> Tuple[float, float]:
         """搜索最优下注额 x* = argmax EV_bet(x)。
 
         候选为标准底池比例 (0.25P…2P) + 区间边界。
         """
         if min_bet >= max_bet:
-            return max_bet, self._ev_bet(max_bet, pot, win_rate, fold_maxes, lams)
+            return max_bet, self._ev_bet(
+                max_bet, pot, win_rate, fold_maxes, lams, to_call,
+            )
 
         fractions = [0.25, 0.33, 0.50, 0.67, 0.75, 1.0, 1.25, 1.5, 2.0]
         candidates = [
@@ -396,7 +410,7 @@ class BoltzmannBot:
         best_x = min_bet
         best_ev = float("-inf")
         for x in sorted(set(candidates)):
-            ev = self._ev_bet(x, pot, win_rate, fold_maxes, lams)
+            ev = self._ev_bet(x, pot, win_rate, fold_maxes, lams, to_call)
             if ev > best_ev:
                 best_ev = ev
                 best_x = x
@@ -461,10 +475,9 @@ class BotFactory:
             raise ValueError(f"未知的机器人风格: {style}")
         name = name or style.value
         if temperature is not None:
-            profile = BotProfile(
-                style=profile.style, temperature=temperature,
-                display_name=profile.display_name, description=profile.description,
-            )
+            # 仅覆盖温度,保留该风格的对手响应参数(F_max/λ/ν/q_delta),
+            # 否则会静默回落到 dataclass 默认值、改变线上决策行为
+            profile = replace(profile, temperature=temperature)
         return BoltzmannBot(name, profile, seed)
 
     @classmethod

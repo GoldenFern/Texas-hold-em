@@ -219,6 +219,104 @@ class TestBotLoopErrorSurfacing:
         assert calls["n"] == 2  # 异常后循环继续跑了下一轮
 
 
+class TestInputValidation:
+    """入口级输入校验:畸形参数必须被拒绝而非静默崩溃。"""
+
+    def test_player_action_rejects_non_numeric_amount(self) -> None:
+        mgr, _ = make_manager()
+        mgr.create_game("Hero", BOTS)
+        game = mgr.game
+        human_idx = next(i for i, p in enumerate(game.players) if p.is_human)
+        game.current_player_index = human_idx
+        legal = game.get_legal_actions(game.players[human_idx])
+        target = (
+            ActionType.BET if ActionType.BET in legal else ActionType.RAISE
+        )
+        assert target in legal  # 本测试需要一条带金额的合法动作
+        for bad_amount in ("", None, float("nan"), float("inf"), True, 10.5):
+            ok, reason = mgr.handle_human_action(target, bad_amount)
+            assert not ok
+            assert "金额" in reason or "数字" in reason
+            # 非法输入不得推进游戏状态
+            assert game.current_player_index == human_idx
+        # 合法整数金额通过类型校验并被服务端钳位接受
+        ok, reason = mgr.handle_human_action(target, 999999)
+        assert ok, reason
+
+    def test_new_game_rejects_bad_numeric_params(self) -> None:
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game("Hero", BOTS, starting_chips=-5)
+        assert not ok
+        assert mgr.game is None
+
+    def test_new_game_rejects_unknown_betting_structure(self) -> None:
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game(
+            "Hero", BOTS, betting_structure="super_turbo",
+        )
+        assert not ok
+        assert "下注结构" in reason
+        assert mgr.game is None  # 显式报错,不再静默回落无限注
+
+    def test_new_game_rejects_duplicate_names(self) -> None:
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game("Hero", [
+            {"style": "BALANCED", "name": "Hero"},   # 与人类重名
+            {"style": "COOL", "name": "B"},
+        ])
+        assert not ok
+        assert "重复" in reason
+        ok, reason = mgr.create_game("Hero", [
+            {"style": "BALANCED", "name": "B"},      # Bot 之间重名
+            {"style": "COOL", "name": "B"},
+        ])
+        assert not ok
+        assert "重复" in reason
+        assert mgr.game is None
+
+
+class TestCreateGameRollback:
+    def test_failure_rolls_back_to_consistent_state(self, monkeypatch) -> None:
+        """构建中途异常必须回滚到无游戏状态并上报 game_error。"""
+        from src.server import events as evt_mod
+        mgr, sio = make_manager()
+        mgr.create_game("Hero", BOTS)
+        gen_before = mgr._game_generation
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("engine exploded")
+
+        monkeypatch.setattr(evt_mod, "GameState", boom)
+        ok, reason = mgr.create_game("Hero2", BOTS)
+        assert not ok
+        assert "创建游戏失败" in reason
+        # 一致性:回到无游戏状态,而非旧游戏残留 + 循环已死的撕裂态
+        assert mgr.game is None
+        assert mgr.bots == {}
+        assert mgr.human_player_name == ""
+        assert mgr._game_generation == gen_before + 1
+        assert any(
+            "创建游戏失败" in p.get("message", "")
+            for p in sio.events("game_error")
+        )
+
+
+class TestWaitSideGenerationGuard:
+    def test_auto_act_skipped_on_stale_generation(self) -> None:
+        """开新局后,旧循环的人类超时自动行动必须作废(防跨局误伤)。"""
+        mgr, sio = make_manager()
+        mgr.create_game("Hero", BOTS)
+        game = mgr.game
+        human_idx = next(i for i, p in enumerate(game.players) if p.is_human)
+        game.current_player_index = human_idx
+        actions_before = len(game.all_actions)
+
+        stale_gen = mgr._game_generation - 1
+        mgr._auto_act_for_human(stale_gen)
+        assert len(game.all_actions) == actions_before
+        assert not sio.events("action_rejected")
+
+
 class TestSessionRegistry:
     def test_default_session(self) -> None:
         reg = GameSessionRegistry()
