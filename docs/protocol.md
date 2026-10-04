@@ -9,7 +9,7 @@
 
 | 事件 | 载荷 | 说明 |
 |---|---|---|
-| `new_game` | `{player_name, bots: [{style, name?, temperature?, llm_config?: {provider?, model?}}], starting_chips, small_blind, big_blind, ante, betting_structure: "no_limit"\|"pot_limit"\|"fixed_limit", auto_rebuy?: boolean}` | 创建新游戏(替换当前游戏)。`auto_rebuy` 缺省 `true`=现金局(破产下一手按 `starting_chips` 重购);`false`=锦标赛(破产出局,剩 1 人有筹码时结束) |
+| `new_game` | `{player_name, bots: [{style, name?, temperature?, llm_config?: {provider?, model?}, rlcard_config?: {agent_type?, model_path?}}], starting_chips, small_blind, big_blind, ante, betting_structure: "no_limit"\|"pot_limit"\|"fixed_limit", auto_rebuy?: boolean}` | 创建新游戏(替换当前游戏)。`auto_rebuy` 缺省 `true`=现金局(破产下一手按 `starting_chips` 重购);`false`=锦标赛(破产出局,剩 1 人有筹码时结束)。`style:"RLCARD"` 需要安装可选依赖 `rlcard` 且仅支持单挑(1 人类 + 1 Bot),否则以 `game_error` 上报拒绝原因 |
 | `player_action` | `{action: "fold"\|"check"\|"call"\|"bet"\|"raise", amount: number}` | 人类玩家动作;amount 仅 bet/raise 有意义(本轮下注总额) |
 | `continue_game` | — | 手牌结束后继续下一手 |
 | `end_game` | — | 结束当前游戏 |
@@ -99,7 +99,8 @@
 | GET | `/api/game/llm_context` | 最近一次 LLM 调用上下文(调试面板) |
 | GET | `/api/config/llm` | LLM 配置(api_key 掩码为 "***") |
 | POST | `/api/config/llm` | 保存 LLM 配置;`api_key:"***"`=保留,`""`=清除;base_url 仅接受预设或本地地址 |
-| GET | `/api/bots/styles` | 可选 Bot 风格列表 |
+| GET | `/api/bots/styles` | 可选 Bot 风格列表(未安装 rlcard 时不含 RLCARD) |
+| GET | `/api/capabilities` | 可选能力探测:`{rlcard: boolean, llm: boolean}` |
 
 已删除(与 SocketIO 重复,前端未使用):`POST /api/game/new`、`POST /api/game/action`。
 

@@ -15,8 +15,6 @@ env/
 .claude/
 .agents/
 .cursor/
-.agents/
-.claude/
 .vscode/
 .idea/
 *.swp

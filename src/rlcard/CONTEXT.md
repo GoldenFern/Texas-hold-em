@@ -9,7 +9,7 @@
 _Avoid_: 双引擎、状态同步
 
 **RLCard Bot**:
-实现 `BotBase` 的机器人子类，内部持有 RLCard agent，通过镜像适配器决策。
+实现 `decide(game_state, player) -> Action` 契约的机器人（`BoltzmannBot` 子类），内部持有 RLCard agent，通过镜像适配器决策。
 _Avoid_: RL 机器人（与 LLM Bot 混淆）
 
 **单挑 RL 对手（Heads-Up RL Opponent）**:
