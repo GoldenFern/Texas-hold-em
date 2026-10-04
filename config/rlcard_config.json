@@ -1,0 +1,14 @@
+{
+  "agent_type": "random",
+  "model_path": null,
+  "training": {
+    "effective_stack_depth": 100,
+    "hyperparameters": {
+      "learning_rate": 1e-4,
+      "batch_size": 128,
+      "buffer_size": 100000,
+      "train_every": 64,
+      "update_target_every": 1000
+    }
+  }
+}

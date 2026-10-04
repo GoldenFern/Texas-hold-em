@@ -192,6 +192,26 @@ class GameManager:
             seen_names.add(bot_name)
             sanitized_bots.append((bot_name, style, cfg))
 
+        # RLCard 集成约束:可选依赖 + 仅单挑(1 人类 + 1 Bot)
+        rlcard_bots = [b for b in sanitized_bots if b[1] == BotStyle.RLCARD]
+        if rlcard_bots:
+            if len(sanitized_bots) != 1:
+                return False, (
+                    "RLCard Bot 仅支持单挑(1 人类 + 1 Bot),"
+                    f"当前配置了 {len(sanitized_bots)} 个 Bot"
+                )
+            from src.rlcard import is_available as rlcard_available
+            if not rlcard_available():
+                return False, "RLCard 未安装,请先 pip install rlcard"
+            eff_stack = starting_chips / big_blind
+            ref_stack = 100.0
+            deviation = abs(eff_stack - ref_stack) / ref_stack
+            if deviation > 0.20:
+                print(
+                    f"[GameManager] ⚠ 有效筹码深度 {eff_stack:.0f} BB 与训练参考值 "
+                    f"{ref_stack:.0f} BB 偏差 {deviation:.0%},RLCard Bot 决策质量可能下降"
+                )
+
         with self._lock:
             # ---- 阶段 2: 终止旧循环并递增代际（此后旧局不可恢复） ----
             self._bot_running = False
@@ -232,6 +252,7 @@ class GameManager:
                         bot = BotFactory.create(
                             style, name=bot_name, seed=seed,
                             temperature=cfg.get("temperature"),
+                            rlcard_config=cfg.get("rlcard_config"),
                         )
                     bots_new[bot_name] = bot
                     players.append(Player(

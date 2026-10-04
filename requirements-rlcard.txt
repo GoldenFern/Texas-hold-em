@@ -1,0 +1,4 @@
+# Optional RLCard + PyTorch dependencies (Phase B training/inference)
+# Install: pip install -r requirements-rlcard.txt
+rlcard>=1.2.0
+torch>=2.0.0

@@ -507,3 +507,58 @@ class TestSessionRegistry:
         a = reg.get_or_create("t1")
         b = reg.get_or_create("t2")
         assert a is not b
+class TestCapabilities:
+    """可选能力探测接口。"""
+
+    def test_capabilities_endpoint_registered(self) -> None:
+        from src.server.app import create_app
+        app = create_app()
+        rules = {r.rule for r in app.url_map.iter_rules()}
+        assert "/api/capabilities" in rules
+
+    def test_capabilities_response_shape(self) -> None:
+        from src.server.app import create_app
+        app = create_app()
+        app.config["TESTING"] = True
+        client = app.test_client()
+        response = client.get("/api/capabilities")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert isinstance(data["rlcard"], bool)
+        assert isinstance(data["llm"], bool)
+
+
+class TestRLCardGameManager:
+    """RLCard 创建约束:仅单挑 + 可选依赖探测。"""
+
+    def test_rlcard_heads_up_succeeds(self) -> None:
+        pytest.importorskip("rlcard")
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game(
+            "Hero", [{"style": "RLCARD", "name": "RLBot"}],
+        )
+        assert ok, reason
+        assert "RLBot" in mgr.bots
+        assert mgr.game is not None
+
+    def test_rlcard_multi_bot_rejected_without_package(self) -> None:
+        """多 Bot RLCARD 配置无论是否安装 rlcard 都必须先被拒绝。"""
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game("Hero", [
+            {"style": "RLCARD", "name": "RLBot"},
+            {"style": "COOL", "name": "Bot2"},
+        ])
+        assert not ok
+        assert "单挑" in reason
+        assert mgr.game is None
+
+    def test_rlcard_missing_package_reports_clear_error(self, monkeypatch) -> None:
+        """未安装 rlcard 时单挑 RLCard 必须明确报错而非崩溃。"""
+        monkeypatch.setattr("src.rlcard.is_available", lambda: False)
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game(
+            "Hero", [{"style": "RLCARD", "name": "RLBot"}],
+        )
+        assert not ok
+        assert "未安装" in reason
+        assert mgr.game is None

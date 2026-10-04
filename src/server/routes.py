@@ -199,3 +199,14 @@ def register_routes(app: Flask) -> None:
             }
             for p in profiles
         ])
+
+    @app.route("/api/capabilities")
+    def capabilities():
+        """上报可选能力是否可用。"""
+        from src.rlcard import is_available as rlcard_available
+        import importlib.util as _util
+        llm_available = _util.find_spec("anthropic") is not None or _util.find_spec("openai") is not None
+        return jsonify({
+            "rlcard": rlcard_available(),
+            "llm": llm_available,
+        })

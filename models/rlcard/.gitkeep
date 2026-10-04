@@ -1,0 +1,3 @@
+# RLCard model artifacts directory.
+# Trained policy checkpoints (*.pth) are gitignored.
+# Place downloaded or self-trained model files here.
