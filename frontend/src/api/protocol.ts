@@ -163,6 +163,8 @@ export interface BotConfig {
   name?: string
   temperature?: number
   llm_config?: { provider?: string; model?: string }
+  /** RLCard per-bot 覆盖(可选依赖,仅单挑);缺省读 config/rlcard_config.json。 */
+  rlcard_config?: { agent_type?: string; model_path?: string }
 }
 
 export interface NewGamePayload {

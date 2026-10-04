@@ -80,6 +80,7 @@ export const zh = {
     rebuyTournament: '锦标赛（出局制）',
     botCount: '机器人数量',
     botStyle: '风格',
+    rlcardHeadsUp: 'RLCard 仅支持单挑（1 人类 + 1 Bot），请将机器人数量设为 1',
     deckSkin: '牌组皮肤',
     sound: '动作提示音（默认关闭）',
     haptics: '触感反馈（默认关闭）',

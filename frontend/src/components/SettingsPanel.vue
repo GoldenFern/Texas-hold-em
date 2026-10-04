@@ -31,6 +31,11 @@ const styleOptions = computed(() =>
       { style: 'LLM', display_name: 'LLM', description: '', temperature: 0.15 },
     ])
 
+const rlcardNeedsHeadsUp = computed(() =>
+  settings.botConfigs.length > 1
+  && settings.botConfigs.some((b) => b.style === 'RLCARD'),
+)
+
 function syncBotCount() {
   const n = Math.max(1, Math.min(8, botCount.value))
   botCount.value = n
@@ -138,6 +143,7 @@ async function saveLlm() {
           </option>
         </select>
       </div>
+      <p v-if="rlcardNeedsHeadsUp" class="hint warn">{{ zh.settings.rlcardHeadsUp }}</p>
     </div>
 
     <button class="primary wide" @click="startGame">{{ zh.settings.start }}</button>
@@ -216,4 +222,6 @@ async function saveLlm() {
 .key-row { display: flex; gap: 8px; }
 .toggle { display: flex; gap: 6px; align-items: center; margin: 0; }
 .toggle input { width: auto; accent-color: var(--accent); }
+.hint { margin: 0; font-size: 12px; color: var(--text-dim); }
+.hint.warn { color: var(--red); }
 </style>
