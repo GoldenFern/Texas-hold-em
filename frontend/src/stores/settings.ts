@@ -66,6 +66,12 @@ export const PROVIDER_PRESETS: Record<string, { label: string; baseUrl: string; 
 }
 
 const NAME_KEY = 'thp_player_name'
+const REBUY_KEY = 'thp_auto_rebuy'
+
+/** 重购规则:缺省现金局(自动重购),仅显式存过 "false" 才用锦标赛。 */
+function loadAutoRebuy(): boolean {
+  return localStorage.getItem(REBUY_KEY) !== 'false'
+}
 
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
@@ -75,6 +81,7 @@ export const useSettingsStore = defineStore('settings', {
     bigBlind: 10,
     ante: 0,
     structure: 'no_limit' as BettingStructure,
+    autoRebuy: loadAutoRebuy(),
     botConfigs: [
       { style: 'COOL' }, { style: 'BALANCED' }, { style: 'WARM' },
       { style: 'HOT' }, { style: 'CHAOS' },
@@ -134,6 +141,11 @@ export const useSettingsStore = defineStore('settings', {
 
     persistName() {
       localStorage.setItem(NAME_KEY, this.playerName)
+    },
+
+    setAutoRebuy(enabled: boolean) {
+      this.autoRebuy = enabled
+      localStorage.setItem(REBUY_KEY, String(enabled))
     },
 
     setSoundEnabled(enabled: boolean) {

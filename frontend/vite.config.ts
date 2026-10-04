@@ -3,7 +3,8 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 // 开发: Vite :5173 代理到 Flask :5000;生产: 构建产物输出到 ../static/dist 由 Flask 直接服务
-export default defineConfig({
+// base 只在 build 时指向 /static/dist/,dev 用 / ——否则源码模块会被 /static 代理转发成 404
+export default defineConfig(({ command }) => ({
   plugins: [vue()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
@@ -19,5 +20,5 @@ export default defineConfig({
     outDir: '../static/dist',
     emptyOutDir: true,
   },
-  base: '/static/dist/',
-})
+  base: command === 'build' ? '/static/dist/' : '/',
+}))

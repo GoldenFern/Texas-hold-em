@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { useGameStore } from '@/stores/game'
 import { zh } from '@/i18n/zh'
 import TableView from '@/components/TableView.vue'
@@ -32,6 +32,13 @@ watch(() => game.reviewHandId, (handId) => {
 
 watch(() => game.reviewingHand, (reviewing, wasReviewing) => {
   if (wasReviewing && !reviewing && game.gameStarted) tab.value = 'analysis'
+})
+
+// 结束提示位于行动区之后,小屏/纵向布局下滚动到可见位置
+watch(() => game.gameOverMessage, async (message) => {
+  if (!message) return
+  await nextTick()
+  document.querySelector('.game-over')?.scrollIntoView({ block: 'nearest' })
 })
 
 const tabs: { key: Tab; label: string }[] = [

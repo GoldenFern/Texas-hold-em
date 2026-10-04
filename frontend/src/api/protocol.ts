@@ -77,6 +77,7 @@ export interface GameUpdate {
   small_blind: number
   big_blind: number
   ante: number
+  auto_rebuy: boolean
   players: PlayerState[]
   winners: Record<string, number>
   legal_actions: string[]
@@ -172,6 +173,8 @@ export interface NewGamePayload {
   big_blind: number
   ante: number
   betting_structure: BettingStructure
+  /** true=现金局(破产按起始筹码重购),false=锦标赛(破产出局)。缺省 true。 */
+  auto_rebuy?: boolean
 }
 
 export interface PlayerActionPayload {

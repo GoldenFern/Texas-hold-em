@@ -49,6 +49,7 @@ function startGame() {
     big_blind: settings.bigBlind,
     ante: settings.ante,
     betting_structure: settings.structure,
+    auto_rebuy: settings.autoRebuy,
   })
   // Prevent a hidden focused submit button from scrolling the mobile page.
   const active = document.activeElement
@@ -98,6 +99,16 @@ async function saveLlm() {
           <option value="no_limit">无限注</option>
           <option value="pot_limit">底池限注</option>
           <option value="fixed_limit">固定限注</option>
+        </select>
+      </div>
+      <div>
+        <label>{{ zh.settings.rebuyPolicy }}</label>
+        <select
+          :value="String(settings.autoRebuy)"
+          @change="settings.setAutoRebuy(($event.target as HTMLSelectElement).value === 'true')"
+        >
+          <option value="true">{{ zh.settings.rebuyCash }}</option>
+          <option value="false">{{ zh.settings.rebuyTournament }}</option>
         </select>
       </div>
       <div>
