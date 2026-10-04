@@ -15,6 +15,8 @@ from src.rlcard.state_encoder import (
 )
 from tests.test_rlcard_bot import make_heads_up_game, make_heads_up_game_custom
 
+pytest.importorskip("numpy", reason="numpy 未安装(RL 镜像编码依赖)")
+
 
 class TestStateEncoderConstants:
     """Observation 常量。"""

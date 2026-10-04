@@ -24,6 +24,7 @@ class TestBuildAgentState:
     """eval_step state 字典格式（与 RLCard env 对齐）。"""
 
     def test_legal_actions_is_ordered_dict(self) -> None:
+        pytest.importorskip("numpy", reason="numpy 未安装")
         import numpy as np
 
         obs = np.zeros(OBS_DIM, dtype=np.float32)

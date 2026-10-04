@@ -156,6 +156,11 @@ class TestMirrorAdapterCardEncoding:
 class TestMirrorAdapterObservation:
     """Observation 编码测试。"""
 
+    @pytest.fixture(autouse=True)
+    def _numpy_guard(self) -> None:
+        """编码依赖 numpy;未安装时跳过本类而非失败。"""
+        _require_numpy()
+
     def test_obs_shape(self) -> None:
         """Observation 应为 54 维。"""
         from src.rlcard.mirror_adapter import MirrorAdapter
@@ -451,6 +456,11 @@ class TestMirrorAdapterActionMapping:
 def _require_rlcard():
     """若 rlcard 未安装则跳过当前测试。"""
     pytest.importorskip("rlcard", reason="rlcard 未安装，跳过 RLCardBot 决策测试")
+
+
+def _require_numpy():
+    """若 numpy 未安装则跳过当前测试(镜像编码依赖 numpy)。"""
+    pytest.importorskip("numpy", reason="numpy 未安装")
 
 
 class TestRLCardBotCreation:
