@@ -65,6 +65,8 @@ export interface Analysis {
 
 export interface GameUpdate {
   hand_id: number
+  /** Number of actions already applied for this hand. */
+  action_index: number
   phase: Phase
   community_cards: string[]
   pot_total: number
@@ -85,8 +87,23 @@ export interface GameUpdate {
 }
 
 export interface ActionRequired {
+  hand_id: number
   player: string
   timeout_seconds: number
+  /** Unix timestamp in milliseconds from the server clock. */
+  deadline_at: number
+}
+
+export interface ActionApplied {
+  hand_id: number
+  action_index: number
+  player: string
+  action: ActionName
+  amount: number
+  phase: Phase
+  pot_total: number
+  is_all_in: boolean
+  occurred_at: number
 }
 
 export interface BotThinking {
@@ -120,6 +137,21 @@ export interface HandCompleted {
   hand_id: number
   players: HandCompletedPlayer[]
   pot_total: number
+  decision_review?: DecisionReview
+}
+
+export type DecisionVerdict = 'good_process' | 'review' | 'neutral'
+
+export interface DecisionReview {
+  action_index: number
+  action: ActionName
+  phase: Phase
+  verdict: DecisionVerdict
+  title: string
+  detail: string
+  equity?: number
+  required_equity?: number
+  ev?: number
 }
 
 export interface GameOver { message: string }
@@ -151,6 +183,7 @@ export interface PlayerActionPayload {
 export interface ServerToClientEvents {
   game_update: (s: GameUpdate) => void
   action_required: (p: ActionRequired) => void
+  action_applied: (p: ActionApplied) => void
   bot_thinking: (p: BotThinking) => void
   action_rejected: (p: ActionRejected) => void
   llm_status: (p: LlmStatus) => void
@@ -212,6 +245,7 @@ export interface ReplayData {
   winning_hands: Record<string, string>
   pot_total: number
   step_snapshots: ReplaySnapshot[]
+  decision_review?: DecisionReview
 }
 
 export interface ReplaySummary {

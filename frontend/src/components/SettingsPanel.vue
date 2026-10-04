@@ -50,6 +50,11 @@ function startGame() {
     ante: settings.ante,
     betting_structure: settings.structure,
   })
+  // Prevent a hidden focused submit button from scrolling the mobile page.
+  const active = document.activeElement
+  if (active instanceof HTMLElement) active.blur()
+  window.scrollTo(0, 0)
+  document.querySelector('main')?.scrollTo(0, 0)
 }
 
 async function saveLlm() {
@@ -105,6 +110,12 @@ async function saveLlm() {
           <option v-for="d in DECK_SKINS" :key="d.id" :value="d.id">{{ d.label }}</option>
         </select>
       </div>
+      <label class="toggle"><input type="checkbox" :checked="settings.soundEnabled"
+             @change="settings.setSoundEnabled(($event.target as HTMLInputElement).checked)" />
+        {{ zh.settings.sound }}</label>
+      <label class="toggle"><input type="checkbox" :checked="settings.hapticsEnabled"
+             @change="settings.setHapticsEnabled(($event.target as HTMLInputElement).checked)" />
+        {{ zh.settings.haptics }}</label>
     </div>
 
     <div class="bots">
@@ -192,4 +203,6 @@ async function saveLlm() {
 .wide { width: 100%; }
 .llm-title { margin-top: 8px; }
 .key-row { display: flex; gap: 8px; }
+.toggle { display: flex; gap: 6px; align-items: center; margin: 0; }
+.toggle input { width: auto; accent-color: var(--accent); }
 </style>

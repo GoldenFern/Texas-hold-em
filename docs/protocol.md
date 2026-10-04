@@ -19,11 +19,12 @@
 | 事件 | 载荷 | 说明 |
 |---|---|---|
 | `game_update` | 见下方 GameUpdate | 每次状态变化后广播 |
-| `action_required` | `{player: string, timeout_seconds: number}` | 轮到人类玩家行动;超时后服务器自动过牌/弃牌 |
+| `action_required` | `{hand_id: number, player: string, timeout_seconds: number, deadline_at: number}` | 轮到人类玩家行动;`deadline_at` 为 Unix 毫秒时间戳,客户端倒计时以服务端截止时间为准 |
+| `action_applied` | `{hand_id: number, action_index: number, player: string, action: "fold"|"check"|"call"|"bet"|"raise", amount: number, phase: string, pot_total: number, is_all_in: boolean, occurred_at: number}` | 一次动作已由引擎应用;`action_index` 从 0 开始并在每手牌重置,客户端按 `(hand_id, action_index)` 去重 |
 | `bot_thinking` | `{player: string, is_llm: boolean}` | Bot 开始思考(LLM 决策可能耗时较长) |
 | `action_rejected` | `{action: string, reason: string}` | 玩家动作被拒(非法/不是回合/无效风格) |
 | `llm_status` | `{player: string, status: "ok"\|"fallback"\|"error", error_type?: "auth"\|"rate_limit"\|"timeout"\|"parse"\|"network", detail?: string}` | LLM 调用结果上报 |
-| `hand_completed` | `{hand_id, players: [{name, is_folded, is_winner, net_profit, best_five: string[], hand_description, hole_cards: string[]}], pot_total}` | 一手结束,等待 continue_game/end_game |
+| `hand_completed` | `{hand_id, players: [{name, is_folded, is_winner, net_profit, best_five: string[], hand_description, hole_cards: string[]}], pot_total, decision_review?: DecisionReview}` | 一手结束,等待 continue_game/end_game;`decision_review` 为人类决策的过程复盘 |
 | `game_over` | `{message: string}` | 游戏结束(人数不足或用户主动结束) |
 | `game_error` | `{message: string}` | 服务器内部错误(bot 循环异常等),游戏可能需要重建 |
 
@@ -32,6 +33,7 @@
 ```
 {
   hand_id: number,
+  action_index: number,              // 当前状态之前已应用的动作数;与 action_applied 序号一致
   phase: "WAITING"|"PRE_FLOP"|"FLOP"|"TURN"|"RIVER"|"SHOWDOWN"|"FINISHED",
   community_cards: string[],        // 如 ["A♠","T♥"]
   pot_total: number,
@@ -59,6 +61,26 @@
   }
 }
 ```
+
+### DecisionReview 结构
+
+```
+{
+  action_index: number,
+  action: string,
+  phase: string,
+  verdict: "good_process"|"review"|"neutral",
+  title: string,
+  detail: string,
+  equity?: number,
+  required_equity?: number,
+  ev?: number
+}
+```
+
+`equity`、`required_equity` 和 `ev` 来自人类行动前客户端可见的分析快照;分析尚未完成时可省略。
+
+`action_applied.amount` 对 `bet`/`raise` 是该街下注后的总额,对 `call`、`check`、`fold` 为 0。
 
 注: `analysis` 仅以子对象形式提供（迁移期的顶层平铺已随 Vue 前端上线移除）。
 

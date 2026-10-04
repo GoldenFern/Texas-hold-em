@@ -44,7 +44,9 @@ def register_routes(app: Flask) -> None:
         mgr = get_game_manager()
         if mgr is None or mgr.game is None:
             return jsonify({"error": "没有活跃的游戏"}), 404
-        return jsonify(mgr.game.to_dict())
+        state = mgr.game.to_dict()
+        state["action_index"] = getattr(mgr, "_action_sequence", 0)
+        return jsonify(state)
 
     @app.route("/api/game/history")
     def game_history():

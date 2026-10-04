@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 import traceback
 import zlib
 from threading import Event, Lock
@@ -48,6 +49,11 @@ class GameManager:
         self._hand_continue_event = Event()
         self._replay_history: List[dict] = []  # 所有已完成手牌的完整回放数据
         self._game_generation: int = 0  # 递增的游戏代际，防竞态
+        self._action_sequence: int = 0  # 当前手牌动作序号（从 0 开始）
+        self._decision_snapshots: List[dict] = []  # 人类行动前的可见分析
+        self._latest_analysis: Optional[dict] = None
+        self._latest_analysis_hand_id: int = 0
+        self._latest_analysis_action_sequence: int = -1
 
     def attach_socketio(self, sio: SocketIO) -> None:
         """注入 SocketIO 实例。"""
@@ -233,6 +239,11 @@ class GameManager:
                 self.bots = bots_new
                 self.human_player_name = player_name
                 self.game = game
+                self._action_sequence = 0
+                self._decision_snapshots = []
+                self._latest_analysis = None
+                self._latest_analysis_hand_id = game.hand_id
+                self._latest_analysis_action_sequence = -1
                 # 新对局不继承旧回放（hand_id 重新从 1 计数）
                 self._replay_history = []
             except Exception as e:  # noqa: BLE001 —— 构建失败必须上报而非撕裂
@@ -286,8 +297,9 @@ class GameManager:
             elif action_type == ActionType.CALL:
                 amount = 0
 
+            self._record_human_decision(action_type, amount, game, player)
             action = Action(player.name, action_type, amount)
-            round_done = game.apply_action(action)
+            self._apply_action_and_emit(action)
 
             self._broadcast_state()
 
@@ -295,6 +307,72 @@ class GameManager:
             self._bot_wake_event.set()
 
             return True, ""
+
+    def _apply_action_and_emit(self, action: Action) -> bool:
+        """应用引擎动作并发出一次实时动作事件。
+
+        所有动作入口都经过这里，包含最后一名玩家弃牌这种引擎提前返回
+        的路径，避免动作事件漏发或因重复监听而触发两次动画。
+        """
+        if self.game is None:
+            raise RuntimeError("没有进行中的游戏")
+        round_done = self.game.apply_action(action)
+        self._emit_action_applied(action)
+        return round_done
+
+    def _emit_action_applied(self, action: Action) -> None:
+        """向前端广播引擎已经接受的动作。"""
+        if self.game is None:
+            return
+        phase = action.phase.name if action.phase is not None else self.game.phase.name
+        payload = {
+            "hand_id": self.game.hand_id,
+            "action_index": self._action_sequence,
+            "player": action.player_name,
+            "action": action.action_type.name.lower(),
+            "amount": action.amount,
+            "phase": phase,
+            "pot_total": self.game.pot.total,
+            "is_all_in": bool(action.is_all_in),
+            "occurred_at": int(time.time() * 1000),
+        }
+        self._action_sequence += 1
+        self._emit("action_applied", payload)
+
+    def _record_human_decision(
+        self,
+        action_type: ActionType,
+        amount: int,
+        game: GameState,
+        player: Player,
+    ) -> None:
+        """保存人类行动前可见的最小决策快照,供本手结束复盘。"""
+        to_call = max(0, game.current_bet - player.current_bet)
+        analysis = (
+            self._latest_analysis
+            if (
+                self._latest_analysis is not None
+                and self._latest_analysis_hand_id == game.hand_id
+                and self._latest_analysis_action_sequence == self._action_sequence
+            )
+            else {}
+        )
+        odds = analysis.get("odds_ev", {})
+        required = odds.get("required_equity")
+        if required is None and to_call > 0:
+            required = round(to_call / max(1, game.pot.total + to_call) * 100, 2)
+        snapshot = {
+            "action_index": self._action_sequence,
+            "action": action_type.name.lower(),
+            "phase": game.phase.name,
+            "pot_total": game.pot.total,
+            "to_call": to_call,
+            "amount": amount,
+            "equity": odds.get("equity"),
+            "required_equity": required,
+            "ev": odds.get("ev"),
+        }
+        self._decision_snapshots.append(snapshot)
 
     def _start_bot_loop(self) -> None:
         """启动 Bot 循环作为 SocketIO 后台 green thread。"""
@@ -386,6 +464,11 @@ class GameManager:
                 if self.game is None:
                     return True
                 self.game.start_new_hand()
+                self._action_sequence = 0
+                self._decision_snapshots = []
+                self._latest_analysis = None
+                self._latest_analysis_hand_id = self.game.hand_id
+                self._latest_analysis_action_sequence = -1
                 self._broadcast_state()
             return False
 
@@ -460,7 +543,7 @@ class GameManager:
                 if action.action_type == ActionType.RAISE and game.current_bet == 0:
                     action = Action(cp.name, ActionType.BET, amount=action.amount)
 
-            game.apply_action(action)
+            self._apply_action_and_emit(action)
             if llm_status is not None:
                 payload = {"player": snap_player_name, "status": llm_status}
                 error_type = getattr(bot, "last_error_type", "")
@@ -494,7 +577,7 @@ class GameManager:
             auto = (
                 ActionType.CHECK if ActionType.CHECK in legal else ActionType.FOLD
             )
-            game.apply_action(Action(cp.name, auto))
+            self._apply_action_and_emit(Action(cp.name, auto))
             self._emit("action_rejected", {
                 "action": "timeout",
                 "reason": f"行动超时,已自动{'过牌' if auto == ActionType.CHECK else '弃牌'}",
@@ -579,6 +662,8 @@ class GameManager:
             for_player=human.name if human and not human_folded else None,
             reveal_all=human_folded,
         )
+        # 让客户端丢弃延迟到达的旧分析状态,动作数与 action_applied 对齐。
+        state["action_index"] = self._action_sequence
         # 添加当前可行动作
         if human and human.name == self.game.players[self.game.current_player_index].name:
             state["legal_actions"] = [
@@ -613,27 +698,45 @@ class GameManager:
         self._emit("game_update", state)
 
         if analysis_args is not None:
+            analysis_hand_id = self.game.hand_id
+            analysis_action_sequence = self._action_sequence
             self._socketio.start_background_task(
                 self._emit_analysis_update, state, analysis_args,
-                self._game_generation,
+                self._game_generation, analysis_hand_id, analysis_action_sequence,
             )
 
     def _emit_analysis_update(
-        self, state: dict, analysis_args: dict, generation: int,
+        self,
+        state: dict,
+        analysis_args: dict,
+        generation: int,
+        hand_id: int,
+        action_sequence: int,
     ) -> None:
         """锁外计算分析并广播带 analysis 的状态（后台任务）。"""
         analysis = self.analyzer.analyze_snapshot(**analysis_args)
         if generation != self._game_generation:
             return  # 游戏已重建，丢弃过期分析
+        if self.game is None or self.game.hand_id != hand_id:
+            return
+        if self._action_sequence != action_sequence:
+            return  # 动作已推进,避免旧分析覆盖当前决策
+        self._latest_analysis = analysis
+        self._latest_analysis_hand_id = hand_id
+        self._latest_analysis_action_sequence = action_sequence
         state = dict(state)
         state["analysis"] = analysis
         self._emit("game_update", state)
 
     def _emit_action_required(self, player_name: str) -> None:
         """通知客户端需要行动。"""
+        hand_id = self.game.hand_id if self.game is not None else 0
+        deadline_at = int((time.time() + HUMAN_ACTION_TIMEOUT) * 1000)
         self._emit("action_required", {
+            "hand_id": hand_id,
             "player": player_name,
             "timeout_seconds": HUMAN_ACTION_TIMEOUT,
+            "deadline_at": deadline_at,
         })
 
     def _emit_hand_completed(self) -> None:
@@ -678,11 +781,63 @@ class GameManager:
         with_hand.sort(key=lambda x: x[1], reverse=True)  # score 降序 = 最强在前
         players_data = [d for d, _ in with_hand] + [d for d, _ in without_hand]
 
-        self._emit("hand_completed", {
+        payload = {
             "hand_id": self.game.hand_id,
             "players": players_data,
             "pot_total": self.game.pot.total,
-        })
+        }
+        review = self._build_decision_review()
+        if review is not None:
+            payload["decision_review"] = review
+        self._emit("hand_completed", payload)
+
+    def _build_decision_review(self) -> Optional[dict]:
+        """从人类行动前快照选择一条有价值的过程复盘。"""
+        if not self._decision_snapshots:
+            return None
+        candidates = [
+            item for item in self._decision_snapshots
+            if item.get("ev") is not None or item.get("equity") is not None
+        ]
+        item = candidates[-1] if candidates else self._decision_snapshots[-1]
+        action = str(item.get("action", "check"))
+        phase = str(item.get("phase", "PRE_FLOP"))
+        ev = item.get("ev")
+        equity = item.get("equity")
+        required = item.get("required_equity")
+
+        verdict = "neutral"
+        title = "记录一次决策"
+        detail = "这次复盘缺少完整模拟结果，先关注行动前的信息和下注尺度。"
+        if isinstance(ev, (int, float)):
+            if action in {"call", "bet", "raise"} and ev < 0:
+                verdict = "review"
+                title = "复盘这次投入"
+                detail = "行动前估计的期望值为负，下一次可以先比较所需权益与自己的权益。"
+            elif action == "fold" and ev > 0:
+                verdict = "review"
+                title = "复盘这次弃牌"
+                detail = "行动前估计仍有正期望，下一次可以检查是否过早放弃了可实现的权益。"
+            else:
+                verdict = "good_process"
+                title = "过程判断稳定"
+                detail = "这次行动与行动前的权益和底池价格一致，继续记录过程质量。"
+
+        review = {
+            "action_index": int(item.get("action_index", 0)),
+            "action": action,
+            "phase": phase,
+            "verdict": verdict,
+            "title": title,
+            "detail": detail,
+        }
+        if equity is not None:
+            review["equity"] = equity
+        if required is not None:
+            review["required_equity"] = required
+        if ev is not None:
+            review["ev"] = ev
+        return review
 
     def _emit_game_over(self) -> None:
         """通知游戏结束。"""
@@ -743,6 +898,9 @@ class GameManager:
                 "pot_total": history.pot_total,
                 "step_snapshots": getattr(history, 'step_snapshots', []),
             }
+            review = self._build_decision_review()
+            if review is not None:
+                replay["decision_review"] = review
             self._replay_history.append(replay)
 
             # 限制回放历史内存（最多保留 100 手）

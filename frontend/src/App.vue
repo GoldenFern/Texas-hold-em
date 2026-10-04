@@ -26,6 +26,14 @@ watch(() => game.gameStarted, (started) => {
   tab.value = started ? 'analysis' : 'settings'
 })
 
+watch(() => game.reviewHandId, (handId) => {
+  if (handId != null) tab.value = 'replay'
+})
+
+watch(() => game.reviewingHand, (reviewing, wasReviewing) => {
+  if (wasReviewing && !reviewing && game.gameStarted) tab.value = 'analysis'
+})
+
 const tabs: { key: Tab; label: string }[] = [
   { key: 'settings', label: zh.panel.settings },
   { key: 'analysis', label: zh.analysis.title },
@@ -96,10 +104,10 @@ h1 { margin: 0; font-size: 1.05rem; color: var(--accent); }
 
 main {
   flex: 1; display: grid; grid-template-columns: 1fr 380px;
-  gap: 12px; padding: 12px; min-height: 0;
+  gap: 12px; padding: 12px; min-height: 0; overflow-y: auto;
 }
 .stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.stage > :first-child { flex: 1; min-height: 0; }
+.stage > :first-child { flex: 1; min-height: min-content; }
 .game-over { text-align: center; color: var(--accent); }
 
 aside { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
@@ -109,7 +117,39 @@ aside { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 .tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .tab-body > * { flex: 1; min-height: 0; }
 
-@media (max-width: 1000px) {
-  main { grid-template-columns: 1fr; }
+@media (max-width: 1200px) {
+  main {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .stage { flex: 0 0 auto; }
+  .stage > :first-child {
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 500px;
+  }
+  aside { flex: 0 0 auto; min-height: 420px; }
+}
+
+@media (max-width: 650px) {
+  .layout { height: auto; min-height: 100%; }
+  main {
+    display: block;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .stage {
+    min-height: 0;
+  }
+  .stage > :first-child {
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 360px;
+  }
+  aside {
+    min-height: 420px;
+    margin-top: 10px;
+  }
 }
 </style>

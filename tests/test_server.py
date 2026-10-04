@@ -171,6 +171,52 @@ class TestGameManager:
         assert mgr._game_generation == gen1 + 1
         assert mgr.human_player_name == "Hero2"
 
+    def test_action_applied_event_has_sequence_and_pot(self) -> None:
+        """每个成功动作只发一次带手牌序号的实时事件。"""
+        mgr, sio = make_manager()
+        mgr.create_game("Hero", BOTS)
+        game = mgr.game
+        human_idx = next(i for i, p in enumerate(game.players) if p.is_human)
+        game.current_player_index = human_idx
+        legal = game.get_legal_actions(game.players[human_idx])
+        action = ActionType.CALL if ActionType.CALL in legal else ActionType.CHECK
+
+        ok, reason = mgr.handle_human_action(action, 0)
+        assert ok, reason
+        events = sio.events("action_applied")
+        assert len(events) == 1
+        assert events[0]["hand_id"] == game.hand_id
+        assert events[0]["action_index"] == 0
+        assert events[0]["action"] == action.name.lower()
+        assert isinstance(events[0]["occurred_at"], int)
+        assert events[0]["pot_total"] >= 0
+
+    def test_action_required_includes_server_deadline(self) -> None:
+        mgr, sio = make_manager()
+        mgr.create_game("Hero", BOTS)
+        mgr._emit_action_required("Hero")
+        payload = sio.events("action_required")[-1]
+        assert payload["hand_id"] == mgr.game.hand_id
+        assert payload["deadline_at"] > 0
+        assert payload["deadline_at"] >= payload["timeout_seconds"] * 1000
+
+    def test_decision_review_uses_visible_snapshot_without_result_bias(self) -> None:
+        mgr, _ = make_manager()
+        mgr._decision_snapshots = [{
+            "action_index": 2,
+            "action": "call",
+            "phase": "FLOP",
+            "equity": 31.5,
+            "required_equity": 40.0,
+            "ev": -1.7,
+        }]
+        review = mgr._build_decision_review()
+        assert review is not None
+        assert review["action_index"] == 2
+        assert review["verdict"] == "review"
+        assert review["equity"] == 31.5
+        assert "输" not in review["detail"]
+
     def test_auto_act_for_human_on_timeout(self) -> None:
         """超时自动动作:能过则过牌,否则弃牌,并广播 action_rejected。"""
         mgr, sio = make_manager()

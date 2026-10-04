@@ -7,6 +7,9 @@ import type { BotStyleInfo } from '@/api/protocol'
 import {
   DECK_SKINS, loadPreferredSkin, savePreferredSkin, type DeckSkin,
 } from '@/utils/deckSkin'
+import {
+  HAPTICS_KEY, SOUND_KEY, loadFeedbackPreference, saveFeedbackPreference,
+} from '@/utils/feedback'
 
 /** Provider 预设(与后端 PROVIDER_PRESETS 对齐,含 volcengine/longcat,F22)。 */
 export const PROVIDER_PRESETS: Record<string, { label: string; baseUrl: string; models: string[] }> = {
@@ -78,6 +81,8 @@ export const useSettingsStore = defineStore('settings', {
     ] as BotConfig[],
     availableStyles: [] as BotStyleInfo[],
     deckSkin: loadPreferredSkin() as DeckSkin,
+    soundEnabled: loadFeedbackPreference(SOUND_KEY),
+    hapticsEnabled: loadFeedbackPreference(HAPTICS_KEY),
     llm: null as LlmConfigPayload | null,
     llmSaving: false,
   }),
@@ -129,6 +134,16 @@ export const useSettingsStore = defineStore('settings', {
 
     persistName() {
       localStorage.setItem(NAME_KEY, this.playerName)
+    },
+
+    setSoundEnabled(enabled: boolean) {
+      this.soundEnabled = enabled
+      saveFeedbackPreference(SOUND_KEY, enabled)
+    },
+
+    setHapticsEnabled(enabled: boolean) {
+      this.hapticsEnabled = enabled
+      saveFeedbackPreference(HAPTICS_KEY, enabled)
     },
   },
 })

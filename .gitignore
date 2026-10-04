@@ -12,6 +12,8 @@ venv/
 env/
 
 # IDE
+.claude/
+.agents/
 .cursor/
 .vscode/
 .idea/
@@ -28,6 +30,12 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.env.*
+!.env.example
+!.env.template
+
+# Local temporary work
+tmp/
 
 # pytest
 .pytest_cache/
@@ -35,3 +43,8 @@ Thumbs.db
 # Frontend
 frontend/node_modules/
 static/dist/
+
+# Office temporary files kept locally in docs/
+docs/~$*.docx
+docs/~WRL*.tmp
+docs/玻尔兹曼分布数学建模.docx

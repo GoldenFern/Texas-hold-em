@@ -65,6 +65,13 @@ python scripts/build_preflop_table.py   # 重新生成翻前多人胜率表
 - API Key 只进 `.env`(`THP_LLM_API_KEY` 或按 Provider 环境变量),严禁写入 git 跟踪文件
 - 失败分类:auth / rate_limit / timeout / parse / network → `llm_status` 事件
 
+### 前端交互与布局
+- `action_applied` 以 `(hand_id, action_index)` 去重；同动作的分析广播不会重复生成行动流。
+- 截止时间使用 `action_required.deadline_at`；人类行动时保存当时可见的决策数据，结束后从结算弹窗进入复盘。
+- 桌面手牌和公共牌为 72×102px，移动端自己的手牌为 52×74px；牌面点数和花色由原生文本增强，素材来源不变。
+- 650px 以下多人桌采用左右分列座位和 3+2 公共牌；行动流在牌桌下方。小屏结算弹窗和回放可换行，避免横向裁切。
+- 前端检查：`cd frontend && npm run test && npm run typecheck && npm run build`。测试命令使用 Node.js 22.6+ 的原生 TypeScript 类型剥离，不增加测试库依赖。
+
 ## 编程约定
 
 - Python 3.13+,类型标注 + `from __future__ import annotations`;Google 风格 Docstring;中文注释

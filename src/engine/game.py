@@ -142,6 +142,8 @@ class GameState:
         self.deck.shuffle()
         self.pot.reset()
         self.community_cards = []
+        # 初始回放快照发生在发牌前,显式标记为 WAITING,避免复用上一手 FINISHED。
+        self.phase = GamePhase.WAITING
         self.current_bet = 0
         self.last_raise = 0
         self.min_raise = self.big_blind
