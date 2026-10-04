@@ -19,7 +19,8 @@
     修正原文对"原下注者也要付 C+R"的高估。
 
 限制:
-    - 翻前 runout 组合爆炸,本工具要求公共牌 >= 3 张;
+    - 翻前 runout 组合爆炸:默认要求公共牌 >= 3 张;公共牌不足 3 张
+      时用 --runout-sims N 切换为蒙特卡洛 runout(可行性换精度);
     - 对手仅 Fold/Call,无再加注、无后续街、无筹码/全下限制;
     - p_i 只按手牌强弱估计,未利用英雄加注所暴露的范围信息;
     - p_i 假设其余 n_opp 个未知手牌都会留到摊牌,未随实际跟注人数修正。
@@ -129,21 +130,24 @@ def opponent_field_equity(
 
 def build_samples(
     hero: Cards, board: Cards, n_opp: int, samples: int, seed: int,
-    p_sims: int = 400,
+    p_sims: int = 400, runout_sims: int = 0,
 ) -> List[Sample]:
-    """对对手手牌抽样,并对每个抽样完全枚举剩余公共牌。
+    """对对手手牌抽样,并对每个抽样枚举或 MC 采样剩余公共牌。
 
-    对每个抽样一次枚举 runout 得到英雄对任意跟注者子集的摊牌权益;
+    对每个抽样一次遍历 runout 得到英雄对任意跟注者子集的摊牌权益;
     每个对手的 p_i 按对手信息集(只知道自己手牌+公共牌)用蒙特卡洛
     对随机未知手牌估计,并按手牌缓存。
 
     Args:
         hero: 英雄底牌。
-        board: 公共牌(3-5 张)。
+        board: 公共牌(0-5 张;0 即翻前)。
         n_opp: 对手数量。
         samples: 对手手牌抽样数。
         seed: 随机种子。
         p_sims: 对手权益的蒙特卡洛次数。
+        runout_sims: >0 时对每个抽样用该次数的 MC runout 代替完全枚举
+            (翻前/两街未发时的可行方案);0 表示完全枚举,要求
+            公共牌 >= 3 张。
     """
     hero_ids = treys_ids(hero)
     board_ids = treys_ids(board)
@@ -163,7 +167,11 @@ def build_samples(
 
         shares = [0.0] * n_masks
         total = 0
-        for combo in itertools.combinations(deck, needed):
+        if runout_sims > 0:
+            runouts = (rng.sample(deck, needed) for _ in range(runout_sims))
+        else:
+            runouts = itertools.combinations(deck, needed)
+        for combo in runouts:
             full_board = board_ids + list(combo)
             hero_rank = _EVALUATOR.evaluate(hero_ids, full_board)
             ranks = [_EVALUATOR.evaluate(h, full_board) for h in opp_hands]
@@ -303,6 +311,10 @@ def main() -> int:
         "--p-sims", type=int, default=400,
         help="对手信息集权益的蒙特卡洛次数",
     )
+    parser.add_argument(
+        "--runout-sims", type=int, default=0,
+        help="runout 蒙特卡洛次数;0=完全枚举(要求公共牌>=3)",
+    )
     parser.add_argument("--r-max", type=float, default=None, help="R 上限(默认 2P)")
     parser.add_argument("--r-points", type=int, default=25, help="R 采样点数")
     parser.add_argument("--seed", type=int, default=20261003)
@@ -318,8 +330,10 @@ def main() -> int:
     board = parse_cards(args.board)
     if len(hero) != 2:
         parser.error("英雄底牌必须是 2 张")
-    if not 3 <= len(board) <= 5:
-        parser.error("公共牌必须为 3-5 张(翻前枚举不可行)")
+    if not 0 <= len(board) <= 5:
+        parser.error("公共牌必须为 0-5 张")
+    if len(board) < 3 and args.runout_sims <= 0:
+        parser.error("公共牌少于 3 张时必须指定 --runout-sims(翻前枚举不可行)")
     seen = {c.short_str for c in hero + board}
     if len(seen) != len(hero) + len(board):
         parser.error("存在重复的牌")
@@ -342,15 +356,17 @@ def main() -> int:
 
     samples = build_samples(
         hero, board, args.opponents, args.samples, args.seed, args.p_sims,
+        args.runout_sims,
     )
     r_max = args.r_max if args.r_max is not None else 2.0 * args.pot
     if r_max <= 0:
         parser.error("R 上限必须大于 0")
     rs = [r_max * i / (args.r_points - 1) for i in range(args.r_points)]
 
+    board_txt = " ".join(c.short_str for c in board) if board else "翻前"
     print(
         f"场景: {' '.join(c.short_str for c in hero)} | "
-        f"{' '.join(c.short_str for c in board)} | "
+        f"{board_txt} | "
         f"P={args.pot:.1f} C={args.to_call:.1f} "
         f"对手={args.opponents} 抽样={args.samples}"
     )
@@ -374,7 +390,7 @@ def main() -> int:
 
     title = (
         f"EV-加注曲线 | {' '.join(c.short_str for c in hero)} on "
-        f"{' '.join(c.short_str for c in board)} | "
+        f"{board_txt} | "
         f"P={args.pot:.0f} C={args.to_call:.0f} "
         f"对手={args.opponents}"
     )

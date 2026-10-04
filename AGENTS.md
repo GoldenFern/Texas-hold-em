@@ -19,6 +19,7 @@ python main.py --cli --hands 25   # CLI 模式(6 个 AI Bot 自动对战)
 python -m pytest tests/ -q --ignore=tests/test_llm_live.py   # 全部单测
 python scripts/sim_10000hands.py  # 万手守恒/零和门禁(失败退出码 1;--hands N 可减量)
 python scripts/build_preflop_table.py   # 重新生成翻前多人胜率表
+python scripts/ev_raise_scenarios.py    # 典型场景 EV-加注曲线批量分析(图输出 tmp/ev_raise_curves/)
 ```
 
 ## 架构分层
