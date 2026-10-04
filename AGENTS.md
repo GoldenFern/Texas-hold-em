@@ -53,12 +53,14 @@ python scripts/build_preflop_table.py   # 重新生成翻前多人胜率表
 
 ### GameManager 并发模型
 - SocketIO 显式 `async_mode="threading"`(eventlet 已弃用并从依赖移除;未 monkey_patch 时 green thread + 原生锁会冻结事件循环),bot 循环跑在后台线程,原生 `threading.Lock/Event` 语义正确
-- Event 等待用 `_wait_event`(socketio.sleep 0.1s 轮询,禁用阻塞式 wait)
+- Event 等待用 `_wait_event`(socketio.sleep 0.1s 轮询,禁用阻塞式 wait);人类行动超时以 `time.monotonic()` 截止时间为准,禁止按循环次数累计(防调度/GC 漂移)
 - LLM 决策在锁外执行,回锁后按 generation/hand_id/player 三重校验;人类等待侧超时自动行动同样带 generation 快照守卫(`_auto_act_for_human(gen)`)
-- `create_game` 三段式:参数校验(含数值类型/风格/重名)→ 终止旧循环递增代际 → 构建失败回滚到无游戏一致状态并上报 `game_error`
-- 所有 SocketIO 入口对客户端数据做严格校验(金额仅接受有限数字,拒绝 bool/NaN/字符串),任何入口异常必须回报 `action_rejected`/`game_error`,严禁静默吞
+- `create_game` 三段式:参数校验(含数值类型/风格/重名/auto_rebuy 布尔)→ 终止旧循环递增代际 → 构建失败回滚到无游戏一致状态并上报 `game_error`;新局清空 reporter(战绩/对手模型从零开始)
+- 重购策略由 `new_game.auto_rebuy` 决定:默认 `true` 现金局,破产玩家下一手按 `starting_chips` 重购;`false` 锦标赛,破产出局,剩 1 人有筹码时先广播末手 `hand_completed`,用户继续后再 `game_over`
+- 所有 SocketIO 入口对客户端数据做严格校验(金额仅接受有限数字,拒绝 bool/NaN/字符串),`call/check/fold` 的 amount 一律归一为 0,任何入口异常必须回报 `action_rejected`/`game_error`,严禁静默吞
 - `_broadcast_state` 锁内只做快照;MC 分析在后台任务用数值快照计算(`BattleAnalyzer.analyze_snapshot`)
 - 循环级异常 → `game_error` 事件 + 循环存活,严禁静默吞
+- 浏览器 Origin 白名单默认 5000/5173;自定义端口自动补本机地址,局域网/域名经 `--allow-origin` 或 `create_app(extra_origins=...)` 追加
 
 ### LLM 层
 - max_tokens 默认 4096(勿改回大值:超过 Provider 上限会导致全部调用 400 并静默降级)
@@ -70,6 +72,7 @@ python scripts/build_preflop_table.py   # 重新生成翻前多人胜率表
 - 截止时间使用 `action_required.deadline_at`；人类行动时保存当时可见的决策数据，结束后从结算弹窗进入复盘。
 - 桌面手牌和公共牌为 72×102px，移动端自己的手牌为 52×74px；牌面点数和花色由原生文本增强，素材来源不变。
 - 650px 以下多人桌采用左右分列座位和 3+2 公共牌；行动流在牌桌下方。小屏结算弹窗和回放可换行，避免横向裁切。
+- 设置页可选重购规则（现金局/锦标赛，默认现金局，存 localStorage）；Vite `base` 仅 build 指向 `/static/dist/`，dev 用 `/`（否则 `/static` 代理会吞掉源码模块导致 404）。
 - 前端检查：`cd frontend && npm run test && npm run typecheck && npm run build`。测试命令使用 Node.js 22.6+ 的原生 TypeScript 类型剥离，不增加测试库依赖。
 
 ## 编程约定

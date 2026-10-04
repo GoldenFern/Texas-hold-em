@@ -24,6 +24,13 @@ from src.server.routes import set_game_manager
 # 人类玩家行动超时（秒），超时自动过牌/弃牌
 HUMAN_ACTION_TIMEOUT = 60.0
 
+# 浏览器 Origin 白名单:本地 Flask :5000 与 Vite :5173。
+# 用 --port/--allow-origin 启动时由 create_app(extra_origins=...) 追加。
+DEFAULT_CORS_ORIGINS = [
+    "http://127.0.0.1:5000", "http://localhost:5000",
+    "http://127.0.0.1:5173", "http://localhost:5173",
+]
+
 # 兼容旧代码的模块级引用（register_events 时赋值；新代码用实例属性）
 socketio: Optional[SocketIO] = None
 
@@ -71,20 +78,25 @@ class GameManager:
 
         以 socketio.sleep(0.1) 粒度轮询,兼容任意 async_mode
         (阻塞式 Event.wait 会长期占用线程且无法响应循环终止)。
+        超时以 time.monotonic() 截止时间为准:按循环次数累计会在
+        调度/GC 停顿下产生远超预期的时间漂移。
 
         Returns:
             True 表示事件已置位；False 表示超时或循环被终止。
         """
         if self._socketio is None:
             return event.is_set()
-        waited = 0.0
+        deadline = None if timeout is None else time.monotonic() + timeout
         while self._bot_running:
             if event.is_set():
                 return True
-            self._socketio.sleep(0.1)
-            waited += 0.1
-            if timeout is not None and waited >= timeout:
+            if deadline is None:
+                self._socketio.sleep(0.1)
+                continue
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return False
+            self._socketio.sleep(min(0.1, remaining))
         return False
 
     @staticmethod
@@ -120,11 +132,16 @@ class GameManager:
         big_blind: int = 10,
         ante: int = 0,
         betting_structure: str = "no_limit",
+        auto_rebuy: bool = True,
     ) -> tuple:
         """创建新游戏。
 
         全部参数先校验、后变更状态；构建中途失败会回滚到
         无游戏的一致状态（旧循环已终止,不可复活旧局）。
+
+        Args:
+            auto_rebuy: True = 现金局,破产玩家下一手按起始筹码重购;
+                False = 锦标赛,破产即出局,只剩 1 人有筹码时结束。
 
         Returns:
             (成功与否, 失败原因)。
@@ -137,6 +154,8 @@ class GameManager:
         }
         if betting_structure not in bs_map:
             return False, f"无效的下注结构: {betting_structure}"
+        if not isinstance(auto_rebuy, bool):
+            return False, "重购规则必须是布尔值"
 
         try:
             starting_chips = self._coerce_int(starting_chips, "初始筹码")
@@ -231,6 +250,9 @@ class GameManager:
                     big_blind=big_blind,
                     ante=ante,
                     betting_structure=bs_map[betting_structure],
+                    auto_rebuy=auto_rebuy,
+                    # 重购按本桌买入补满,避免与起始筹码脱节
+                    rebuy_amount=starting_chips,
                 )
                 game.on("hand_finished", self._on_hand_finished)
                 game.start_new_hand()
@@ -244,8 +266,9 @@ class GameManager:
                 self._latest_analysis = None
                 self._latest_analysis_hand_id = game.hand_id
                 self._latest_analysis_action_sequence = -1
-                # 新对局不继承旧回放（hand_id 重新从 1 计数）
+                # 新对局不继承旧回放与旧统计（战绩/对手模型重新开始）
                 self._replay_history = []
+                self.reporter.clear()
             except Exception as e:  # noqa: BLE001 —— 构建失败必须上报而非撕裂
                 traceback.print_exc()
                 self.bots = {}
@@ -294,7 +317,8 @@ class GameManager:
                 max_bet = game.get_max_bet(player)
                 amount = max(min_raise, min(amount, max_bet))
                 amount = min(amount, player.chips + player.current_bet)
-            elif action_type == ActionType.CALL:
+            else:
+                # 协议规定 call/check/fold 的 amount 恒为 0,忽略客户端传值
                 amount = 0
 
             self._record_human_decision(action_type, amount, game, player)
@@ -444,16 +468,12 @@ class GameManager:
                 return True
             game = self.game
             if game.phase.value >= 6:
-                active = [p for p in game.players if p.chips > 0]
+                # 末手同样先发结算数据,由"继续/结束"决定下一手或收场
                 self._broadcast_state()
-                if len(active) >= 2:
-                    self._emit_hand_completed()
-                    self._hand_paused = True
-                    self._hand_continue_event.clear()
-                    hand_ended = True
-                else:
-                    self._emit_game_over()
-                    return True
+                self._emit_hand_completed()
+                self._hand_paused = True
+                self._hand_continue_event.clear()
+                hand_ended = True
 
         if hand_ended:
             # 等待用户点击"继续"或"结束"（事件驱动,无超时）
@@ -463,7 +483,12 @@ class GameManager:
             with self._lock:
                 if self.game is None:
                     return True
+                # 现金局会给 0 筹码玩家按起始筹码重购;锦标赛不足 2 人则开局即结束
                 self.game.start_new_hand()
+                if self.game.phase.value >= 6:
+                    self._broadcast_state()
+                    self._emit_game_over()
+                    return True
                 self._action_sequence = 0
                 self._decision_snapshots = []
                 self._latest_analysis = None
@@ -542,6 +567,9 @@ class GameManager:
                 action.amount = min(action.amount, cp.chips + cp.current_bet)
                 if action.action_type == ActionType.RAISE and game.current_bet == 0:
                     action = Action(cp.name, ActionType.BET, amount=action.amount)
+            else:
+                # call/check/fold 金额恒为 0(防 Bot 返回脏值破坏 action_applied 契约)
+                action.amount = 0
 
             self._apply_action_and_emit(action)
             if llm_status is not None:
@@ -1011,17 +1039,25 @@ _game_manager = registry.get_or_create("default")
 set_game_manager(_game_manager)
 
 
-def register_events(app: Flask) -> None:
-    """注册 SocketIO 事件处理器。"""
+def register_events(
+    app: Flask, extra_origins: Optional[List[str]] = None,
+) -> None:
+    """注册 SocketIO 事件处理器。
+
+    Args:
+        app: Flask 应用。
+        extra_origins: 额外允许的浏览器 Origin(如 --port/局域网地址)。
+    """
     global socketio
     # 显式固定 threading 模式：代码使用原生 threading.Lock/Event,
     # 与真实线程语义一致。eventlet 已弃用,且未 monkey_patch 时
     # green thread + 原生锁会冻结整个事件循环。
-    # CORS 白名单:本地开发（Flask :5000 与 Vite :5173）
-    socketio = SocketIO(app, async_mode="threading", cors_allowed_origins=[
-        "http://127.0.0.1:5000", "http://localhost:5000",
-        "http://127.0.0.1:5173", "http://localhost:5173",
-    ])
+    # CORS 白名单:默认本地 Flask :5000 与 Vite :5173,额外来源由调用方追加
+    origins = list(DEFAULT_CORS_ORIGINS)
+    for origin in extra_origins or []:
+        if origin and origin not in origins:
+            origins.append(origin)
+    socketio = SocketIO(app, async_mode="threading", cors_allowed_origins=origins)
     _game_manager.attach_socketio(socketio)
 
     @socketio.on("connect")
@@ -1057,6 +1093,7 @@ def register_events(app: Flask) -> None:
                 big_blind=data.get("big_blind", 10),
                 ante=data.get("ante", 0),
                 betting_structure=data.get("betting_structure", "no_limit"),
+                auto_rebuy=data.get("auto_rebuy", True),
             )
         except Exception as e:  # noqa: BLE001 —— 入口级兜底
             traceback.print_exc()

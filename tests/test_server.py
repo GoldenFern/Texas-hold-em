@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from threading import Event, Timer
 from typing import List, Tuple
 
 import pytest
@@ -9,7 +10,7 @@ import pytest
 from flask import Flask
 
 from src.server.events import GameManager, GameSessionRegistry
-from src.utils.constants import ActionType
+from src.utils.constants import ActionType, GamePhase, PlayerStatus
 
 
 class FakeSocketIO:
@@ -62,6 +63,15 @@ class TestAppFactory:
         # 与 SocketIO 重复的写路由已删除
         assert "/api/game/new" not in rules
         assert "/api/game/action" not in rules
+
+    def test_create_app_accepts_extra_origins(self) -> None:
+        """自定义端口/局域网 Origin 必须能追加进 CORS 白名单。"""
+        from src.server.app import create_app
+        from src.server import events as evt
+        create_app(extra_origins=["http://127.0.0.1:5004"])
+        origins = evt.socketio.server.eio.cors_allowed_origins
+        assert "http://127.0.0.1:5004" in origins
+        assert "http://127.0.0.1:5000" in origins
 
 
 class TestRoutesBasics:
@@ -231,9 +241,106 @@ class TestGameManager:
         assert sio.events("action_rejected")
 
 
+class TestRebuyPolicy:
+    """现金局(自动重购)与锦标赛(出局制)的结束条件。"""
+
+    def _force_finished_with_one_active(self, mgr) -> None:
+        game = mgr.game
+        for p in game.players:
+            p.status = PlayerStatus.ALL_IN
+        game.phase = GamePhase.FINISHED
+        game.players[0].chips = 0
+        game.players[1].chips = 300
+        game.players[2].chips = 0
+
+    @staticmethod
+    def _schedule_continue(mgr, delay: float = 0.2) -> None:
+        """异步模拟用户点击"继续下一手"(步骤 3 会先 clear 再等待)。"""
+        timer = Timer(delay, mgr._hand_continue_event.set)
+        timer.daemon = True
+        timer.start()
+
+    def test_rebuy_defaults_to_starting_chips(self) -> None:
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game("Hero", BOTS, starting_chips=400)
+        assert ok, reason
+        assert mgr.game.auto_rebuy is True
+        assert mgr.game.rebuy_amount == 400
+        assert mgr.game.to_dict()["auto_rebuy"] is True
+
+    def test_tournament_mode_disables_rebuy(self) -> None:
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game("Hero", BOTS, auto_rebuy=False)
+        assert ok, reason
+        assert mgr.game.auto_rebuy is False
+
+    def test_cash_game_rebuys_and_continues_after_bust(self) -> None:
+        """现金局:末手先发结算,继续后 0 筹码玩家按起始筹码重购。"""
+        mgr, sio = make_manager()
+        mgr.create_game("Hero", BOTS, starting_chips=100)
+        self._force_finished_with_one_active(mgr)
+        self._schedule_continue(mgr)
+
+        should_exit = mgr._bot_loop_step()
+
+        assert should_exit is False
+        assert sio.events("hand_completed"), "末手必须先发结算数据"
+        assert not sio.events("game_over")
+        game = mgr.game
+        assert game.players[0].rebuy_count == 1
+        assert game.players[2].rebuy_count == 1
+        assert game.players[1].rebuy_count == 0
+        assert all(p.chips > 0 for p in game.players)
+        assert game.phase != GamePhase.FINISHED
+
+    def test_tournament_shows_last_hand_then_game_over(self) -> None:
+        """锦标赛:末手结算先广播,继续后人数不足才 game_over。"""
+        mgr, sio = make_manager()
+        mgr.create_game("Hero", BOTS, auto_rebuy=False)
+        self._force_finished_with_one_active(mgr)
+        self._schedule_continue(mgr)
+
+        should_exit = mgr._bot_loop_step()
+
+        assert should_exit is True
+        assert sio.events("hand_completed"), "末手结算必须先于 game_over"
+        assert sio.events("game_over")
+
+    def test_reporter_reset_on_new_game(self) -> None:
+        """新对局不继承上一局的战绩统计。"""
+        mgr, _ = make_manager()
+        mgr.create_game("Hero", BOTS)
+        mgr.reporter.history.append(object())  # type: ignore[arg-type]
+        assert mgr.reporter.history
+        mgr.create_game("Hero2", BOTS)
+        assert mgr.reporter.history == []
+        assert mgr.reporter.player_stats == {}
+
+
+class TestHumanTimeoutWallClock:
+    def test_wait_event_uses_wall_clock_deadline(self, monkeypatch) -> None:
+        """超时必须按真实时钟截止,不能按循环次数累计(防调度漂移)。"""
+        from src.server import events as evt_mod
+
+        fake_now = [0.0]
+        monkeypatch.setattr(evt_mod.time, "monotonic", lambda: fake_now[0])
+
+        class SlowSocketIO:
+            def sleep(self, seconds: float) -> None:
+                fake_now[0] += seconds * 3  # 模拟 3 倍调度延迟
+
+        mgr = GameManager(SlowSocketIO())  # type: ignore[arg-type]
+        mgr._bot_running = True
+        started = fake_now[0]
+        result = mgr._wait_event(Event(), timeout=1.0)
+        elapsed = fake_now[0] - started
+
+        assert result is False
+        assert elapsed < 1.5, f"超时漂移过大: {elapsed:.1f}s(旧实现约 3.0s)"
+
+
 class TestBotLoopErrorSurfacing:
     def test_loop_step_error_emits_game_error(self) -> None:
-        """循环内异常必须上报 game_error 且循环存活(不再静默冻结)。"""
         mgr, sio = make_manager()
         mgr.create_game("Hero", BOTS)
         # 制造损坏状态触发异常
@@ -303,6 +410,31 @@ class TestInputValidation:
         assert not ok
         assert "下注结构" in reason
         assert mgr.game is None  # 显式报错,不再静默回落无限注
+
+    def test_new_game_rejects_non_bool_auto_rebuy(self) -> None:
+        mgr, _ = make_manager()
+        ok, reason = mgr.create_game("Hero", BOTS, auto_rebuy=1)  # type: ignore[arg-type]
+        assert not ok
+        assert "布尔" in reason
+        assert mgr.game is None
+
+    def test_fold_amount_is_normalized_to_zero(self) -> None:
+        """协议规定 fold/check/call 的 amount 恒为 0,脏输入不得透传。"""
+        mgr, sio = make_manager()
+        mgr.create_game("Hero", BOTS)
+        game = mgr.game
+        human_idx = next(i for i, p in enumerate(game.players) if p.is_human)
+        game.current_player_index = human_idx
+        human = game.players[human_idx]
+        game.current_bet = human.current_bet + 50  # 制造需要跟注的局面
+        assert ActionType.FOLD in game.get_legal_actions(human)
+
+        ok, reason = mgr.handle_human_action(ActionType.FOLD, 777)
+        assert ok, reason
+        applied = sio.events("action_applied")[-1]
+        assert applied["action"] == "fold"
+        assert applied["amount"] == 0
+        assert game.all_actions[-1].amount == 0
 
     def test_new_game_rejects_duplicate_names(self) -> None:
         mgr, _ = make_manager()

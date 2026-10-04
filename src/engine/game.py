@@ -861,6 +861,7 @@ class GameState:
             "small_blind": self.small_blind,
             "big_blind": self.big_blind,
             "ante": self.ante,
+            "auto_rebuy": self.auto_rebuy,
             "players": [
                 self._player_to_dict(p, show_hole=(reveal_all or for_player == p.name))
                 for p in self.players

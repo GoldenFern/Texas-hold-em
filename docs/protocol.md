@@ -9,7 +9,7 @@
 
 | 事件 | 载荷 | 说明 |
 |---|---|---|
-| `new_game` | `{player_name, bots: [{style, name?, temperature?, llm_config?: {provider?, model?}}], starting_chips, small_blind, big_blind, ante, betting_structure: "no_limit"\|"pot_limit"\|"fixed_limit"}` | 创建新游戏(替换当前游戏) |
+| `new_game` | `{player_name, bots: [{style, name?, temperature?, llm_config?: {provider?, model?}}], starting_chips, small_blind, big_blind, ante, betting_structure: "no_limit"\|"pot_limit"\|"fixed_limit", auto_rebuy?: boolean}` | 创建新游戏(替换当前游戏)。`auto_rebuy` 缺省 `true`=现金局(破产下一手按 `starting_chips` 重购);`false`=锦标赛(破产出局,剩 1 人有筹码时结束) |
 | `player_action` | `{action: "fold"\|"check"\|"call"\|"bet"\|"raise", amount: number}` | 人类玩家动作;amount 仅 bet/raise 有意义(本轮下注总额) |
 | `continue_game` | — | 手牌结束后继续下一手 |
 | `end_game` | — | 结束当前游戏 |
@@ -25,7 +25,7 @@
 | `action_rejected` | `{action: string, reason: string}` | 玩家动作被拒(非法/不是回合/无效风格) |
 | `llm_status` | `{player: string, status: "ok"\|"fallback"\|"error", error_type?: "auth"\|"rate_limit"\|"timeout"\|"parse"\|"network", detail?: string}` | LLM 调用结果上报 |
 | `hand_completed` | `{hand_id, players: [{name, is_folded, is_winner, net_profit, best_five: string[], hand_description, hole_cards: string[]}], pot_total, decision_review?: DecisionReview}` | 一手结束,等待 continue_game/end_game;`decision_review` 为人类决策的过程复盘 |
-| `game_over` | `{message: string}` | 游戏结束(人数不足或用户主动结束) |
+| `game_over` | `{message: string}` | 游戏结束(锦标赛人数不足或用户主动结束) |
 | `game_error` | `{message: string}` | 服务器内部错误(bot 循环异常等),游戏可能需要重建 |
 
 ### GameUpdate 结构
@@ -42,6 +42,7 @@
   current_player_index: number,
   betting_structure: string,
   small_blind: number, big_blind: number, ante: number,
+  auto_rebuy: boolean,              // 现金局(true)/锦标赛(false)
   players: [{
     name, chips, seat, status: "ACTIVE"|"FOLDED"|"ALL_IN"|"OUT",
     current_bet, total_bet, is_dealer, is_small_blind, is_big_blind,

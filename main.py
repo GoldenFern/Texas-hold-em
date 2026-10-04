@@ -12,8 +12,18 @@ import argparse
 import sys
 
 
-def run_server(host: str = "127.0.0.1", port: int = 5000, debug: bool = False) -> None:
-    """启动 Flask + SocketIO Web 服务器。"""
+def run_server(
+    host: str = "127.0.0.1",
+    port: int = 5000,
+    debug: bool = False,
+    extra_origins: list[str] | None = None,
+) -> None:
+    """启动 Flask + SocketIO Web 服务器。
+
+    Args:
+        extra_origins: 额外允许的浏览器 Origin(自定义端口由本函数自动补齐
+            本机地址;局域网/域名访问通过 --allow-origin 传入)。
+    """
     try:
         from src.llm.langchain_client import configure_llm_traffic_logging
         configure_llm_traffic_logging(enabled=True)
@@ -21,7 +31,16 @@ def run_server(host: str = "127.0.0.1", port: int = 5000, debug: bool = False) -
         pass  # LLM 依赖为可选，无 LLM Bot 时跳过
     from src.server.app import create_app
 
-    app = create_app()
+    # 自定义端口同样可用:自动加入本机回环 Origin 变体
+    origins = list(extra_origins or [])
+    for hostname in ("127.0.0.1", "localhost"):
+        origin = f"http://{hostname}:{port}"
+        if origin not in origins:
+            origins.append(origin)
+    if host not in ("127.0.0.1", "localhost", "0.0.0.0", "::"):
+        origins.append(f"http://{host}:{port}")
+
+    app = create_app(extra_origins=origins)
 
     # create_app() 中 register_events() 会初始化全局 socketio，通过模块引用获取
     import src.server.events as evt
@@ -82,7 +101,9 @@ def run_cli(num_hands: int = 10) -> None:
         if game.winners:
             for name, amount in game.winners.items():
                 winning_hand = game.winning_hands.get(name)
-                hand_desc = winning_hand.description if winning_hand else "?"
+                hand_desc = (
+                    winning_hand.description if winning_hand else "未摊牌（对手弃牌）"
+                )
                 print(f"  Winner: {name} (+${amount}) — {hand_desc}")
 
         # 重置玩家状态（不补充筹码，保持真实筹码量）
@@ -112,6 +133,9 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1",
                         help="服务器主机（默认仅本机;局域网访问用 0.0.0.0）")
     parser.add_argument("--port", type=int, default=5000, help="服务器端口")
+    parser.add_argument("--allow-origin", action="append", default=[],
+                        metavar="ORIGIN",
+                        help="额外允许的浏览器 Origin（可重复,局域网/域名访问用）")
     parser.add_argument("--debug", action="store_true", help="调试模式")
 
     args = parser.parse_args()
@@ -121,7 +145,8 @@ def main() -> None:
     elif args.cli:
         run_cli(num_hands=args.hands)
     else:
-        run_server(host=args.host, port=args.port, debug=args.debug)
+        run_server(host=args.host, port=args.port, debug=args.debug,
+                   extra_origins=args.allow_origin)
 
 
 if __name__ == "__main__":
